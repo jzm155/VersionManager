@@ -778,8 +778,33 @@ function renderReportView(versionId) {
     
     // Formato solicitado: **{Numero}** Versao - Lancamento {{Data}}
     const header = `**${version.name}** Versao - Lancamento ${version.date}  @everyone`;
-    const itemsList = versionItems.map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n');
-    const fullText = `${header}\n\n${itemsList}`;
+    
+    // Agrupa itens por cliente
+    const itemsByClient = {};
+    versionItems.forEach(item => {
+        let clientName = 'Outros';
+        if (item.clientId) {
+            const name = getClientName(item.clientId);
+            if (name && name !== 'Desconhecido') {
+                clientName = name;
+            }
+        }
+        if (!itemsByClient[clientName]) itemsByClient[clientName] = [];
+        itemsByClient[clientName].push(item);
+    });
+
+    let itemsList = '';
+    const sortedClients = Object.keys(itemsByClient).sort((a, b) => {
+        if (a === 'Outros') return 1;
+        if (b === 'Outros') return -1;
+        return a.localeCompare(b);
+    });
+
+    sortedClients.forEach(client => {
+        itemsList += `**${client}**\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
+    });
+
+    const fullText = `${header}\n\n${itemsList.trim()}`;
 
     const container = document.createElement('div');
     container.innerHTML = `
