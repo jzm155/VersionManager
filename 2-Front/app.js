@@ -2,10 +2,127 @@
 const state = {
     versions: [],
     clients: [],
-    items: []
+    items: [],
+    isAuthenticated: false,
+    currentUser: null
 };
 
+// --- Configuração do Supabase ---
+const SUPABASE_URL = 'https://hzabyzrzorwqzaticupq.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6YWJ5enJ6b3J3cXphdGljdXBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2MTcyNzAsImV4cCI6MjA4OTE5MzI3MH0.7LKw3xHi_4Ct4OGBLd1pQqKt8wKPSiDrbrdWuY7k_RY';
+let supabaseClient = null;
+
+// Função para carregar e iniciar o Supabase
+function loadSupabase() {
+    if (typeof supabase === 'undefined') {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+        script.onload = initSupabase;
+        document.head.appendChild(script);
+    } else {
+        initSupabase();
+    }
+}
+
+function initSupabase() {
+    // @ts-ignore
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    refreshClientsState();
+    refreshVersionsState().then(() => {
+        if (document.querySelector('.nav-link[data-route="versions"]').classList.contains('active')) {
+            renderVersions();
+        }
+    });
+}
+
+async function refreshClientsState() {
+    if (!supabaseClient) return;
+    
+    // Busca todos os clientes. Tenta 'Cliente' (Maiúsculo) primeiro, fallback para 'cliente'.
+    let { data, error } = await supabaseClient.from('Cliente').select('*');
+
+    if (error) {
+        console.warn('Erro ao buscar tabela "Cliente", tentando minúsculo "cliente"...', error.message);
+        const retry = await supabaseClient.from('cliente').select('*');
+        if (!retry.error) {
+            data = retry.data;
+            error = null;
+        }
+    }
+    
+    if (error) {
+        console.error('Erro ao buscar clientes do Supabase:', error);
+        showModal('Erro no Banco', 'Não foi possível buscar clientes. Detalhe: ' + error.message);
+        return;
+    }
+    
+    if (!data || data.length === 0) {
+        console.warn('Atenção: Lista vazia. Verifique se a tabela tem dados e se as Políticas RLS estão permitindo SELECT para "anon".');
+    }
+
+    // Atualiza o estado local para refletir o banco de dados
+    // Mapeia colunas do banco (Id, Nome) para o formato interno da aplicação (id, name)
+    // Usa Id ou id para garantir compatibilidade com Postgres (que padroniza minúsculo)
+    state.clients = (data || []).map(row => ({
+        id: row.Id || row.id || row.ID,
+        name: row.Nome || row.nome || row.Name || row.name || row.NOME,
+        active: true // Define como true pois a tabela não tem coluna de status
+    }));
+}
+
+async function refreshVersionsState() {
+    if (!supabaseClient) return;
+    
+    // Busca todas as versões
+    let { data, error } = await supabaseClient
+        .from('Versao')
+        .select('*')
+        .order('Id', { ascending: false });
+
+    if (error) {
+        const retry = await supabaseClient.from('versao').select('*').order('id', { ascending: false });
+        if (!retry.error) {
+            data = retry.data;
+            error = null;
+        }
+    }
+    
+    if (error) {
+        console.error('Erro ao buscar versões do Supabase:', error);
+        return;
+    }
+    
+    if (!data || data.length === 0) {
+        console.warn('ALERTA: A consulta retornou 0 versões. Verifique se o RLS (Policies) está habilitado na tabela Versao.');
+    }
+
+    state.versions = (data || []).map(row => ({
+        id: row.Id || row.id,
+        name: row.Titulo || row.titulo,
+        date: (row.DataPublicacao || row.datapublicacao || '').split('T')[0],
+        status: row.Status || row.status
+    }));
+}
+
+function toggleLoading(show) {
+    const existingOverlay = document.getElementById('loading-overlay');
+    if (show) {
+        if (!existingOverlay) {
+            const overlay = document.createElement('div');
+            overlay.id = 'loading-overlay';
+            overlay.className = 'loading-overlay';
+            overlay.innerHTML = '<div class="spinner"></div>';
+            document.body.appendChild(overlay);
+        }
+    } else {
+        if (existingOverlay) {
+            existingOverlay.remove();
+        }
+    }
+}
+
 // Referências ao DOM
+const appContainer = document.querySelector('.app-container');
 const contentArea = document.getElementById('content-area');
 const pageTitle = document.getElementById('page-title');
 const navLinks = document.querySelectorAll('.nav-link');
@@ -14,7 +131,8 @@ const navLinks = document.querySelectorAll('.nav-link');
 
 // Helper para obter nome do cliente
 function getClientName(clientId) {
-    const client = state.clients.find(c => c.id === clientId);
+    // Usa '==' para garantir compatibilidade entre string (UUID) e int
+    const client = state.clients.find(c => c.id == clientId);
     return client ? client.name : 'Desconhecido';
 }
 
@@ -26,6 +144,14 @@ function getStatusInfo(statusId) {
         case 3: return { label: 'Cancelado', className: 'status-cancelado' };
         default: return { label: 'Desconhecido', className: '' };
     }
+}
+
+// Helper para formatar data ISO (yyyy-mm-dd) para BR (dd/MM/yyyy)
+function formatDateToBR(dateString) {
+    if (!dateString) return '';
+    const parts = dateString.split('-');
+    if (parts.length !== 3) return dateString;
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
 
 // Helper de Modal Customizado (Substitui alert/confirm)
@@ -69,9 +195,63 @@ function showModal(title, message, onConfirm = null, type = 'alert') {
     }
 }
 
+// Função para verificar sessão persistente no localStorage
+function checkSession() {
+    const storedUser = localStorage.getItem('version_reporter_user');
+    if (storedUser) {
+        try {
+            const user = JSON.parse(storedUser);
+            if (user && user.id && user.name) {
+                state.isAuthenticated = true;
+                state.currentUser = user;
+                return true; // Sessão válida encontrada
+            }
+        } catch (e) {
+            console.error("Erro ao analisar dados do usuário armazenados, limpando sessão.", e);
+            localStorage.removeItem('version_reporter_user');
+        }
+    }
+    return false; // Nenhuma sessão válida
+}
+
+// Função para atualizar o cabeçalho com o Usuário Logado
+function updateUserDisplay() {
+    const header = document.querySelector('.header');
+    if (!header) return;
+
+    let userDisplay = document.getElementById('header-user-info');
+    if (!userDisplay) {
+        userDisplay = document.createElement('div');
+        userDisplay.id = 'header-user-info';
+        userDisplay.style.marginLeft = 'auto'; // Força alinhamento à direita no flexbox
+        userDisplay.style.display = 'flex';
+        userDisplay.style.alignItems = 'center';
+        userDisplay.style.gap = '15px';
+        header.appendChild(userDisplay);
+    }
+
+    if (state.currentUser) {
+        userDisplay.innerHTML = `
+            <span style="font-weight: 600; color: #2c3e50;">👤 ${state.currentUser.name}</span>
+            <button id="btn-logout" class="btn-secondary btn-sm" style="font-size: 0.8rem;">Sair</button>
+        `;
+        document.getElementById('btn-logout').onclick = () => {
+            localStorage.removeItem('version_reporter_user');
+            window.location.reload();
+        };
+    }
+}
+
 // Etapa 2: Renderizar Tela de Versões
-function renderVersions() {
+async function renderVersions() {
     pageTitle.textContent = 'Versões';
+    
+    toggleLoading(true);
+    try {
+        if (supabaseClient) await refreshVersionsState();
+    } finally {
+        toggleLoading(false);
+    }
     
     // Container do cabeçalho da página (Título + Botão)
     const headerContainer = document.createElement('div');
@@ -96,7 +276,7 @@ function renderVersions() {
 
         card.innerHTML = `
             <h3>${version.name}</h3>
-            <span style="display:block; margin-bottom: 10px;">Lançamento: ${version.date}</span>
+            <span style="display:block; margin-bottom: 10px;">Lançamento: ${formatDateToBR(version.date)}</span>
             <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
         `;
         grid.appendChild(card);
@@ -113,9 +293,33 @@ function renderVersions() {
 }
 
 // Etapa 3: Detalhes da Versão
-function renderVersionDetail(versionId) {
+async function renderVersionDetail(versionId) {
     const version = state.versions.find(v => v.id === versionId);
     if (!version) return;
+
+    toggleLoading(true);
+    try {
+        if (supabaseClient) {
+            // Busca itens vinculados a esta versão
+            let { data, error } = await supabaseClient.from('Item').select('*').eq('IdVersao', versionId);
+            
+            if (error) {
+                console.warn('Fallback: tentando buscar itens com tabela minúscula');
+                const retry = await supabaseClient.from('item').select('*').eq('IdVersao', versionId);
+                if (!retry.error) data = retry.data;
+            }
+
+            if (data) {
+                const mappedItems = data.map(mapDatabaseItemToLocal);
+                // Atualiza o estado local: remove itens antigos desta versão e insere os atualizados
+                state.items = state.items.filter(i => i.versionId !== versionId).concat(mappedItems);
+            }
+            // Garante que nomes de clientes estejam disponíveis
+            if (state.clients.length === 0) await refreshClientsState();
+        }
+    } finally {
+        toggleLoading(false);
+    }
 
     // Filtrar itens desta versão
     const versionItems = state.items.filter(i => i.versionId === versionId);
@@ -152,7 +356,7 @@ function renderVersionDetail(versionId) {
                     <tr>
                         <th>Ticket</th>
                         <th>Nome</th>
-                        <th>Data</th>
+                        <th style="min-width: 110px;">Data</th>
                         <th>Migration</th>
                         <th>Cliente</th>
                         <th style="text-align: right;">Ações</th>
@@ -163,7 +367,7 @@ function renderVersionDetail(versionId) {
                         <tr>
                             <td><a href="${item.url.startsWith('http') ? item.url : 'https://' + item.url}" target="_blank">${item.ticket || 'Link'}</a></td>
                             <td>${item.name}</td>
-                            <td>${item.date}</td>
+                            <td>${formatDateToBR(item.date)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
                             <td>${getClientName(item.clientId)}</td>
                             <td style="text-align: right;">
@@ -229,9 +433,25 @@ function updateVersionStatus(versionId, newStatus) {
     const version = state.versions.find(v => v.id === versionId);
     if (version) {
         const statusInfo = getStatusInfo(newStatus);
-        showModal('Alterar Status', `Deseja alterar o status para ${statusInfo.label}?`, () => {
-            version.status = newStatus;
-            renderVersionDetail(versionId); // Recarrega a tela para atualizar o badge
+        showModal('Alterar Status', `Deseja alterar o status para ${statusInfo.label}?`, async () => {
+            toggleLoading(true);
+            try {
+                if (supabaseClient) {
+                    const { error } = await supabaseClient
+                        .from('Versao')
+                        .update({ Status: newStatus })
+                        .eq('Id', versionId);
+                    if (error) throw error;
+                }
+                // Atualiza estado local e re-renderiza
+                version.status = newStatus;
+                renderVersionDetail(versionId); 
+            } catch (err) {
+                console.error(err);
+                showModal('Erro', 'Falha ao atualizar status da versão.');
+            } finally {
+                toggleLoading(false);
+            }
         }, 'confirm');
     }
 }
@@ -270,14 +490,29 @@ function openEditVersionModal(version) {
     
     document.getElementById('btn-modal-cancel').onclick = close;
     
-    document.getElementById('modal-edit-form').onsubmit = (e) => {
+    document.getElementById('modal-edit-form').onsubmit = async (e) => {
         e.preventDefault();
-        // Atualiza estado
-        version.name = document.getElementById('modal-version-name').value;
-        version.date = document.getElementById('modal-version-date').value;
-        
-        close();
-        renderVersionDetail(version.id); // Atualiza a tela de fundo
+        const novoNome = document.getElementById('modal-version-name').value;
+        const novaData = document.getElementById('modal-version-date').value;
+
+        toggleLoading(true);
+        try {
+            if (supabaseClient) {
+                const { error } = await supabaseClient
+                    .from('Versao')
+                    .update({ Nome: novoNome, DataPublicacao: novaData })
+                    .eq('Id', version.id);
+                if (error) throw error;
+            }
+            version.name = novoNome;
+            version.date = novaData;
+            close();
+            renderVersionDetail(version.id); 
+        } catch (err) {
+            showModal('Erro', 'Erro ao atualizar versão: ' + err.message);
+        } finally {
+            toggleLoading(false);
+        }
     };
 }
 
@@ -300,14 +535,10 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                 <h2>${isEdit ? 'Editar Item' : 'Novo Item'}</h2>
                 <div class="form-group">
                     <label for="modal-item-ticket">Número do Ticket</label>
-                    <input type="text" id="modal-item-ticket" value="${item ? (item.ticket || '') : ''}" required>
+                    <input type="text" id="modal-item-ticket" value="${item ? (item.ticket || '') : ''}">
                 </div>
                 <div class="form-group">
-                    <label for="modal-item-ticket-title">Título do Ticket (Opcional)</label>
-                    <input type="text" id="modal-item-ticket-title" value="${item ? (item.ticketTitle || '') : ''}">
-                </div>
-                <div class="form-group">
-                    <label for="modal-item-name">Nome do Item</label>
+                    <label for="modal-item-name">Descrição</label>
                     <input type="text" id="modal-item-name" value="${item ? item.name : ''}" required>
                 </div>
                 <div class="form-group">
@@ -316,7 +547,7 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                 </div>
                 <div class="form-group">
                     <label for="modal-item-url">URL</label>
-                    <input type="text" id="modal-item-url" value="${item ? item.url : ''}" required>
+                    <input type="text" id="modal-item-url" value="${item ? item.url : ''}">
                 </div>
                 <div class="form-group">
                     <label for="modal-item-client">Cliente</label>
@@ -343,28 +574,51 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
     const close = () => document.body.removeChild(overlay);
     document.getElementById('btn-modal-item-cancel').onclick = close;
 
-    document.getElementById('modal-item-form').onsubmit = (e) => {
+    document.getElementById('modal-item-form').onsubmit = async (e) => {
         e.preventDefault();
         
-        // Lógica de Criação (Focada no pedido de adicionar item novo na versão)
-        // Nota: Simplifiquei assumindo criação de novo item, mas a estrutura suporta edição se necessário.
-        const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
-        const newItem = {
-            id: newId,
-            ticket: document.getElementById('modal-item-ticket').value,
-            ticketTitle: document.getElementById('modal-item-ticket-title').value,
-            name: document.getElementById('modal-item-name').value,
-            date: document.getElementById('modal-item-date').value,
-            url: document.getElementById('modal-item-url').value,
-            migration: document.getElementById('modal-item-migration').checked,
-            clientId: parseInt(document.getElementById('modal-item-client').value),
-            versionId: versionId // VINCULA AUTOMATICAMENTE À VERSÃO SE PASSADO
+        const payload = {
+            Numero: document.getElementById('modal-item-ticket').value,
+            Descricao: document.getElementById('modal-item-name').value,
+            Data: document.getElementById('modal-item-date').value,
+            Url: document.getElementById('modal-item-url').value,
+            Migration: document.getElementById('modal-item-migration').checked,
+            IdCliente: parseInt(document.getElementById('modal-item-client').value),
+            IdVersao: versionId // VINCULA AUTOMATICAMENTE SE FOR PASSADO
         };
         
-        state.items.push(newItem);
-        
-        close();
-        if (onSuccess) onSuccess();
+        toggleLoading(true);
+        try {
+            if (supabaseClient) {
+                const { data, error } = await supabaseClient.from('Item').insert(payload).select();
+                if (error) throw error;
+                
+                // Adiciona ao estado local para aparecer na lista imediatamente
+                if (data && data.length > 0) {
+                    state.items.push(mapDatabaseItemToLocal(data[0]));
+                }
+            } else {
+                // Fallback Mock
+                const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
+                state.items.push({
+                    id: newId,
+                    ticket: payload.Numero,
+                    name: payload.Descricao,
+                    date: payload.Data,
+                    url: payload.Url,
+                    migration: payload.Migration,
+                    clientId: payload.IdCliente,
+                    versionId: payload.IdVersao
+                });
+            }
+            close();
+            if (onSuccess) onSuccess();
+        } catch (err) {
+            console.error(err);
+            showModal('Erro', 'Erro ao criar item: ' + err.message);
+        } finally {
+            toggleLoading(false);
+        }
     };
 }
 
@@ -408,17 +662,110 @@ function openLinkExistingItemsModal(versionId, onSuccess) {
     const close = () => document.body.removeChild(overlay);
     document.getElementById('btn-modal-link-cancel').onclick = close;
 
-    document.getElementById('btn-modal-link-confirm').onclick = () => {
+    document.getElementById('btn-modal-link-confirm').onclick = async () => {
         const selectedIds = Array.from(document.querySelectorAll('.item-to-link:checked'))
                                  .map(checkbox => parseInt(checkbox.value));
 
-        selectedIds.forEach(id => {
-            const item = state.items.find(i => i.id === id);
-            if (item) item.versionId = versionId;
-        });
+        if (selectedIds.length === 0) return showModal('Aviso', 'Selecione pelo menos um item.');
 
-        close();
-        if (onSuccess) onSuccess();
+        toggleLoading(true);
+        try {
+            if (supabaseClient) {
+                const { error } = await supabaseClient.from('Item').update({ IdVersao: versionId }).in('Id', selectedIds);
+                if (error) throw error;
+            }
+            // Atualiza estado local
+            selectedIds.forEach(id => {
+                const item = state.items.find(i => i.id === id);
+                if (item) item.versionId = versionId;
+            });
+            close();
+            if (onSuccess) onSuccess();
+        } catch (err) {
+            showModal('Erro', 'Erro ao vincular itens: ' + err.message);
+        } finally {
+            toggleLoading(false);
+        }
+    };
+}
+
+// Renderizar Tela de Login
+function renderLogin() {
+    // Esconde a aplicação principal se ela existir
+    if (appContainer) appContainer.style.display = 'none';
+
+    const loginHtml = `
+        <div class="login-container" id="login-screen">
+            <form id="login-form" class="form-card login-card" style="margin: 0;">
+                <h2 style="text-align: center; margin-bottom: 20px;">Version Reporter</h2>
+                <div class="form-group">
+                    <label for="login-user">Usuário</label>
+                    <input type="text" id="login-user" placeholder="admin" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-pass">Senha</label>
+                    <input type="password" id="login-pass" placeholder="admin" required>
+                </div>
+                <button type="submit" class="btn-primary" style="width: 100%; margin-top: 10px;">Entrar</button>
+            </form>
+        </div>
+    `;
+
+    // Adiciona ao body
+    document.body.insertAdjacentHTML('beforeend', loginHtml);
+
+    document.getElementById('login-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const user = document.getElementById('login-user').value;
+        const pass = document.getElementById('login-pass').value;
+
+        // Lógica de Login com Supabase
+        if (supabaseClient) {
+            try {
+                // Tenta autenticar na tabela 'Usuario' com campos Username/Password
+                let { data, error } = await supabaseClient
+                    .from('Usuario')
+                    .select('*')
+                    .eq('Username', user)
+                    .eq('Password', pass);
+
+                // Se falhar, tenta fallback para minúsculo (caso o banco tenha normalizado)
+                if (error || !data || data.length === 0) {
+                    const retry = await supabaseClient
+                        .from('usuario')
+                        .select('*')
+                        .eq('username', user)
+                        .eq('password', pass);
+                    
+                    if (!retry.error && retry.data && retry.data.length > 0) {
+                        data = retry.data;
+                        error = null;
+                    }
+                }
+
+                if (data && data.length > 0) {
+                    // Login Sucesso
+                    state.isAuthenticated = true;
+                    
+                    const user = data[0];
+                    state.currentUser = {
+                        id: user.Id || user.id,
+                        name: user.Name || user.name // Captura a propriedade Name
+                    };
+                    localStorage.setItem('version_reporter_user', JSON.stringify(state.currentUser));
+                    updateUserDisplay();
+
+                    document.getElementById('login-screen').remove();
+                    if (appContainer) appContainer.style.display = 'flex';
+                    navigateTo('versions');
+                    return;
+                }
+            } catch (err) {
+                console.error('Erro ao tentar login no banco:', err);
+            }
+        }
+
+        showModal('Acesso Negado', 'Usuário ou senha incorretos.');
     };
 }
 
@@ -465,10 +812,41 @@ function renderReportView(versionId) {
 }
 
 // Renderizar Itens Pendentes (Placeholder)
-function renderPending() {
+async function renderPending() {
     pageTitle.textContent = 'Itens Pendentes';
     
-    // Filtrar itens sem versão (null ou undefined)
+    toggleLoading(true);
+    try {
+        if (supabaseClient) {
+            // Busca apenas itens onde VersaoId é nulo (Pendente)
+            let { data, error } = await supabaseClient
+                .from('Item')
+                .select('*')
+                .is('IdVersao', null)
+                .order('Id', { ascending: false });
+
+            if (error) {
+                console.error('Erro ao buscar itens pendentes:', error);
+                // Tenta fallback minúsculo
+                const retry = await supabaseClient.from('item').select('*').is('IdVersao', null);
+                if (!retry.error) data = retry.data;
+            }
+
+            // Atualiza estado local com os itens pendentes do banco
+            if (data) {
+                const mappedItems = data.map(mapDatabaseItemToLocal);
+                // Substitui itens pendentes no state
+                state.items = state.items.filter(i => i.versionId).concat(mappedItems);
+            }
+            
+            // Garante que clientes estejam carregados para exibir os nomes
+            if (state.clients.length === 0) await refreshClientsState();
+        }
+    } finally {
+        toggleLoading(false);
+    }
+    
+    // Filtrar itens sem versão (null ou undefined) do estado atualizado
     const pendingItems = state.items.filter(i => !i.versionId);
 
     const container = document.createElement('div');
@@ -482,8 +860,8 @@ function renderPending() {
                 <thead>
                     <tr>
                         <th>Ticket</th>
-                        <th>Nome</th>
-                        <th>Data</th>
+                        <th>Descrição</th>
+                        <th style="min-width: 110px;">Data</th>
                         <th>Cliente</th>
                         <th>Migration</th>
                         <th style="text-align: right;">Ações</th>
@@ -494,7 +872,7 @@ function renderPending() {
                         <tr>
                             <td><a href="${item.url.startsWith('http') ? item.url : 'https://' + item.url}" target="_blank">${item.ticket || 'Link'}</a></td>
                             <td>${item.name}</td>
-                            <td>${item.date}</td>
+                            <td>${formatDateToBR(item.date)}</td>
                             <td>${getClientName(item.clientId)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
                             <td style="text-align: right;">
@@ -520,24 +898,43 @@ function renderPending() {
 // Helper para configurar botões de ação de itens (usado em Detalhes e Pendentes)
 function setupItemActions() {
     document.querySelectorAll('.btn-edit-item').forEach(btn => {
-        btn.onclick = (e) => navigateTo('item-form', parseInt(e.target.dataset.id));
+        btn.onclick = (e) => navigateTo('item-form', e.target.dataset.id); // Remove parseInt para suportar UUID se necessário
     });
 
     document.querySelectorAll('.btn-del-item').forEach(btn => {
         btn.onclick = (e) => {
-            const id = parseInt(e.target.dataset.id);
+            const id = e.target.dataset.id; // Mantém como string inicialmente
             showModal('Excluir Item', 'Tem certeza que deseja excluir este item?', () => {
-                state.items = state.items.filter(i => i.id !== id);
-                // Recarrega a view atual (gambiarra simples: verifica titulo)
-                pageTitle.textContent.includes('Pendentes') ? renderPending() : renderVersions(); 
+                (async () => {
+                    if (supabaseClient) {
+                        const { error } = await supabaseClient.from('Item').delete().eq('Id', id);
+                        if (error) {
+                            console.warn('Erro ao deletar (tentando minúsculo)', error);
+                            await supabaseClient.from('item').delete().eq('id', id);
+                        }
+                    }
+                    // Atualiza estado local
+                    state.items = state.items.filter(i => i.id != id);
+                    // Recarrega a view atual
+                    pageTitle.textContent.includes('Pendentes') ? renderPending() : renderVersions(); 
+                })();
             }, 'confirm');
         };
     });
 }
 
 // Renderizar Clientes (Placeholder)
-function renderClients() {
+async function renderClients() {
     pageTitle.textContent = 'Clientes';
+
+    toggleLoading(true);
+    try {
+        if (supabaseClient) {
+            await refreshClientsState();
+        }
+    } finally {
+        toggleLoading(false);
+    }
 
     const container = document.createElement('div');
     container.innerHTML = `
@@ -578,12 +975,31 @@ function renderClients() {
     document.getElementById('btn-add-client').onclick = () => navigateTo('client-form');
 
     // Ações Clientes
-    document.querySelectorAll('.btn-edit-client').forEach(btn => btn.onclick = (e) => navigateTo('client-form', parseInt(e.target.dataset.id)));
+    document.querySelectorAll('.btn-edit-client').forEach(btn => btn.onclick = (e) => {
+        const idStr = e.target.dataset.id;
+        // Busca o cliente para garantir que passamos o ID no formato correto (pode ser UUID string)
+        const client = state.clients.find(c => c.id == idStr);
+        navigateTo('client-form', client ? client.id : idStr);
+    });
+
     document.querySelectorAll('.btn-del-client').forEach(btn => {
         btn.onclick = (e) => {
-            const id = parseInt(e.target.dataset.id);
-            showModal('Excluir Cliente', 'Excluir este cliente?', () => {
-                state.clients = state.clients.filter(c => c.id !== id);
+            const idStr = e.target.dataset.id;
+            const client = state.clients.find(c => c.id == idStr);
+            const id = client ? client.id : idStr;
+
+            showModal('Excluir Cliente', 'Excluir este cliente?', async () => {
+                if (supabaseClient) {
+                    const { error } = await supabaseClient.from('Cliente').delete().eq('Id', id);
+                    if (error) {
+                        showModal('Erro', 'Erro ao excluir do banco: ' + error.message);
+                        return;
+                    }
+                    await refreshClientsState();
+                } else {
+                    // Fallback para mock
+                    state.clients = state.clients.filter(c => c.id != id);
+                }
                 renderClients();
             }, 'confirm');
         };
@@ -593,7 +1009,7 @@ function renderClients() {
 // Etapa 5: Formulário de Cliente (Cadastro/Edição)
 function renderClientForm(id = null) {
     const isEdit = id !== null;
-    const client = isEdit ? state.clients.find(c => c.id === id) : null;
+    const client = isEdit ? state.clients.find(c => c.id == id) : null;
 
     pageTitle.textContent = isEdit ? 'Editar Cliente' : 'Novo Cliente';
 
@@ -616,24 +1032,48 @@ function renderClientForm(id = null) {
     contentArea.appendChild(formContainer);
 
     document.getElementById('btn-cancel').onclick = () => navigateTo('clients');
-    document.getElementById('client-form').onsubmit = (e) => {
+    document.getElementById('client-form').onsubmit = async (e) => {
         e.preventDefault();
         const clientName = e.target.clientName.value;
         
-        if (isEdit) {
-            client.name = clientName;
+        if (supabaseClient) {
+            try {
+                if (isEdit) {
+                    // Update no Supabase
+                    const { error } = await supabaseClient
+                        .from('Cliente')
+                        .update({ Nome: clientName })
+                        .eq('Id', id);
+                    if (error) throw error;
+                } else {
+                    // Insert no Supabase
+                    const { error } = await supabaseClient
+                        .from('Cliente')
+                        .insert([{ Nome: clientName }]);
+                    if (error) throw error;
+                }
+                await refreshClientsState();
+                navigateTo('clients');
+            } catch (err) {
+                showModal('Erro', 'Erro ao salvar no banco: ' + err.message);
+            }
         } else {
-            const newId = Math.max(...state.clients.map(c => c.id), 0) + 1;
-            state.clients.push({ id: newId, name: clientName, active: true });
+            // Fallback para Mock
+            if (isEdit) {
+                client.name = clientName;
+            } else {
+                const newId = Math.max(...state.clients.map(c => c.id), 0) + 1;
+                state.clients.push({ id: newId, name: clientName, active: true });
+            }
+            navigateTo('clients');
         }
-        navigateTo('clients');
     };
 }
 
 // Etapa 6: Formulário de Versão (Cadastro/Edição)
 function renderVersionForm(id = null) {
     const isEdit = id !== null;
-    const version = isEdit ? state.versions.find(v => v.id === id) : null;
+    const version = isEdit ? state.versions.find(v => v.id == id) : null;
 
     pageTitle.textContent = isEdit ? 'Editar Versão' : 'Nova Versão';
 
@@ -659,30 +1099,48 @@ function renderVersionForm(id = null) {
     contentArea.appendChild(formContainer);
 
     document.getElementById('btn-cancel-version').onclick = () => navigateTo('versions');
-    document.getElementById('version-form').onsubmit = (e) => {
+    document.getElementById('version-form').onsubmit = async (e) => {
         e.preventDefault();
-        if (isEdit) {
-            version.name = e.target.versionName.value;
-            version.date = e.target.versionDate.value;
-        } else {
-            const newId = Math.max(...state.versions.map(v => v.id), 0) + 1;
-            // Novas versões nascem como Pendente
-            state.versions.unshift({ id: newId, name: e.target.versionName.value, date: e.target.versionDate.value, status: 2 });
+        const name = e.target.versionName.value;
+        const date = e.target.versionDate.value;
+
+        toggleLoading(true);
+        try {
+            if (supabaseClient) {
+                let error = null;
+                if (isEdit) {
+                    const res = await supabaseClient.from('Versao').update({ Nome: name, DataPublicacao: date }).eq('Id', id);
+                    error = res.error;
+                } else {
+                    const res = await supabaseClient.from('Versao').insert({ Nome: name, DataPublicacao: date, Status: 2 });
+                    error = res.error;
+                }
+                if (error) throw error;
+                await refreshVersionsState(); // Recarrega a lista para obter IDs gerados
+            } else {
+                // Fallback Mock
+                if (isEdit) { version.name = name; version.date = date; }
+                else { const newId = Math.max(...state.versions.map(v => v.id), 0) + 1; state.versions.unshift({ id: newId, name: name, date: date, status: 2 }); }
+            }
+            navigateTo('versions');
+        } catch (err) {
+            showModal('Erro', 'Erro ao salvar versão: ' + err.message);
+        } finally {
+            toggleLoading(false);
         }
-        navigateTo('versions');
     };
 }
 
 // Etapa 7: Formulário de Item (Cadastro/Edição)
 function renderItemForm(id = null) {
     const isEdit = id !== null;
-    const item = isEdit ? state.items.find(i => i.id === id) : null;
+    const item = isEdit ? state.items.find(i => i.id == id) : null;
 
     pageTitle.textContent = isEdit ? 'Editar Item' : 'Novo Item';
 
     const clientOptions = state.clients
         .filter(c => c.active)
-        .map(c => `<option value="${c.id}" ${item && item.clientId === c.id ? 'selected' : ''}>${c.name}</option>`)
+        .map(c => `<option value="${c.id}" ${item && item.clientId == c.id ? 'selected' : ''}>${c.name}</option>`)
         .join('');
 
     const formContainer = document.createElement('div');
@@ -691,14 +1149,10 @@ function renderItemForm(id = null) {
             <h2>${isEdit ? 'Editar Item' : 'Cadastrar Novo Item'}</h2>
             <div class="form-group">
                 <label for="item-ticket">Número do Ticket</label>
-                <input type="text" id="item-ticket" name="itemTicket" value="${item ? (item.ticket || '') : ''}" required>
+                <input type="text" id="item-ticket" name="itemTicket" value="${item ? (item.ticket || '') : ''}">
             </div>
             <div class="form-group">
-                <label for="item-ticket-title">Título do Ticket (Opcional)</label>
-                <input type="text" id="item-ticket-title" name="itemTicketTitle" value="${item ? (item.ticketTitle || '') : ''}">
-            </div>
-            <div class="form-group">
-                <label for="item-name">Nome do Item</label>
+                <label for="item-name">Descrição</label>
                 <input type="text" id="item-name" name="itemName" value="${item ? item.name : ''}" required>
             </div>
             <div class="form-group">
@@ -707,7 +1161,7 @@ function renderItemForm(id = null) {
             </div>
             <div class="form-group">
                 <label for="item-url">URL (Jira, Git, etc)</label>
-                <input type="text" id="item-url" name="itemUrl" value="${item ? item.url : ''}" required>
+                <input type="text" id="item-url" name="itemUrl" value="${item ? item.url : ''}">
             </div>
             <div class="form-group">
                 <label for="item-client">Cliente</label>
@@ -732,32 +1186,58 @@ function renderItemForm(id = null) {
     contentArea.appendChild(formContainer);
 
     document.getElementById('btn-cancel').onclick = () => navigateTo('pending');
-    document.getElementById('item-form').onsubmit = (e) => {
+    document.getElementById('item-form').onsubmit = async (e) => {
         e.preventDefault();
         const form = e.target;
         
-        if (isEdit) {
-            item.ticket = form.itemTicket.value;
-            item.ticketTitle = form.itemTicketTitle.value;
-            item.name = form.itemName.value;
-            item.date = form.itemDate.value;
-            item.url = form.itemUrl.value;
-            item.migration = form.itemMigration.checked;
-            item.clientId = parseInt(form.itemClient.value);
+        const payload = {
+            Numero: form.itemTicket.value,
+            Descricao: form.itemName.value,
+            Data: form.itemDate.value,
+            Url: form.itemUrl.value,
+            Migration: form.itemMigration.checked,
+            IdCliente: form.itemClient.value ? parseInt(form.itemClient.value) : null
+        };
+
+        if (supabaseClient) {
+            let error = null;
+            
+            if (isEdit) {
+                const res = await supabaseClient.from('Item').update(payload).eq('Id', id);
+                error = res.error;
+            } else {
+                // Novo item (VersaoId padrão null no banco ou omitido)
+                payload.IdVersao = null;
+                const res = await supabaseClient.from('Item').insert([payload]);
+                error = res.error;
+            }
+
+            if (error) {
+                showModal('Erro', 'Erro ao salvar item: ' + error.message);
+                return;
+            }
         } else {
-            const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
-            const newItem = {
-                id: newId,
-                ticket: form.itemTicket.value,
-                ticketTitle: form.itemTicketTitle.value,
-                name: form.itemName.value,
-                date: form.itemDate.value,
-                url: form.itemUrl.value,
-                migration: form.itemMigration.checked,
-                clientId: parseInt(form.itemClient.value),
-                versionId: null
-            };
-            state.items.push(newItem);
+            // Fallback Mock
+            if (isEdit) {
+                item.ticket = payload.Numero;
+                item.name = payload.Descricao;
+                item.date = payload.Data;
+                item.url = payload.Url;
+                item.migration = payload.Migration;
+                item.clientId = payload.IdCliente;
+            } else {
+                const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
+                state.items.push({
+                    id: newId,
+                    ticket: payload.Numero,
+                    name: payload.Descricao,
+                    date: payload.Data,
+                    url: payload.Url,
+                    migration: payload.Migration,
+                    clientId: payload.IdCliente,
+                    versionId: null
+                });
+            }
         }
         navigateTo('pending');
     };
@@ -808,8 +1288,22 @@ navLinks.forEach(link => {
     });
 });
 
-// Carregar rota inicial
-navigateTo('versions');
+function initializeApp() {
+    loadSupabase(); // Inicia o Supabase
+
+    if (checkSession()) {
+        // Usuário já está logado, vai para a app
+        if (appContainer) appContainer.style.display = 'flex';
+        updateUserDisplay();
+        navigateTo('versions');
+    } else {
+        // Usuário não está logado, mostra tela de login
+        renderLogin();
+    }
+}
+
+// Inicia a aplicação
+initializeApp();
 
 // --- Configuração de Responsividade (Menu Mobile) ---
 function setupMobileResponsiveness() {
@@ -835,8 +1329,14 @@ function setupMobileResponsiveness() {
 
     // 3. Função de Alternância
     function toggleMenu() {
-        sidebar.classList.toggle('active');
-        overlay.classList.toggle('active');
+        if (window.innerWidth <= 768) {
+            // Mobile: Usa classe active e overlay
+            sidebar.classList.toggle('active');
+            overlay.classList.toggle('active');
+        } else {
+            // Desktop: Usa classe collapsed para reduzir largura
+            sidebar.classList.toggle('collapsed');
+        }
     }
 
     // Event Listeners
@@ -848,7 +1348,8 @@ function setupMobileResponsiveness() {
         link.addEventListener('click', () => {
             // Apenas se estiver em modo mobile (sidebar tem classe active)
             if (sidebar.classList.contains('active')) {
-                toggleMenu();
+                sidebar.classList.remove('active');
+                overlay.classList.remove('active');
             }
         });
     });
@@ -857,34 +1358,16 @@ function setupMobileResponsiveness() {
 // Inicializa a responsividade após o carregamento do DOM
 document.addEventListener('DOMContentLoaded', setupMobileResponsiveness);
 
-// --- Debug / Mock Data Generator ---
-function generateMockData() {
-    state.versions = [
-        { id: 1, name: 'v2.1.0', date: '2023-10-25', status: 1 },
-        { id: 2, name: 'v2.0.5', date: '2023-10-10', status: 1 },
-        { id: 3, name: 'v2.0.0', date: '2023-09-30', status: 2 },
-        { id: 4, name: 'v1.9.8', date: '2023-09-15', status: 3 }
-    ];
-    state.clients = [
-        { id: 1, name: 'TechCorp', active: true },
-        { id: 2, name: 'HealthSys', active: true },
-        { id: 3, name: 'Fintech Solutions', active: false }
-    ];
-    state.items = [
-        { id: 1, ticket: 'JIRA-101', ticketTitle: 'Erro Login', name: 'Correção de autenticação', date: '2023-10-24', url: 'https://jira.com/101', migration: false, clientId: 1, versionId: 1 },
-        { id: 2, ticket: 'JIRA-102', ticketTitle: 'Relatório Vendas', name: 'Novo relatório de vendas', date: '2023-10-23', url: 'https://jira.com/102', migration: true, clientId: 2, versionId: 1 },
-        { id: 3, ticket: 'JIRA-103', ticketTitle: 'Rodapé CSS', name: 'Ajuste no rodapé', date: '2023-10-05', url: 'https://jira.com/103', migration: false, clientId: 1, versionId: 2 },
-        { id: 4, ticket: 'JIRA-104', ticketTitle: 'Performance DB', name: 'Otimização de banco de dados', date: '2023-11-01', url: 'https://jira.com/104', migration: true, clientId: 3, versionId: null },
-        { id: 5, ticket: 'JIRA-105', ticketTitle: 'Refactor JS', name: 'Refatoração da Home', date: '2023-11-02', url: 'https://jira.com/105', migration: false, clientId: 1, versionId: null }
-    ];
-    showModal('Sucesso', 'Dados de teste gerados com sucesso!', () => navigateTo('versions'));
+// Helper para mapear objeto do Banco para Objeto Local
+function mapDatabaseItemToLocal(row) {
+    return {
+        id: row.Id || row.id,
+        ticket: row.Numero || row.numero || '',
+        name: row.Descricao || row.descricao || row.Nome || row.nome || '',
+        date: (row.Data || row.data || '').split('T')[0],
+        url: row.Url || row.url || '',
+        migration: row.Migration || row.migration,
+        clientId: row.IdCliente || row.clienteid,
+        versionId: row.IdVersao || row.versaoid
+    };
 }
-
-// Criação do botão flutuante
-const btnMock = document.createElement('button');
-btnMock.textContent = 'Gerar Mock';
-btnMock.style.cssText = 'position: fixed; bottom: 20px; right: 20px; z-index: 1000; padding: 10px 15px; background-color: #34495e; color: white; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3); opacity: 0.8; transition: opacity 0.3s;';
-btnMock.onmouseover = () => btnMock.style.opacity = '1';
-btnMock.onmouseout = () => btnMock.style.opacity = '0.8';
-btnMock.onclick = generateMockData;
-document.body.appendChild(btnMock);
