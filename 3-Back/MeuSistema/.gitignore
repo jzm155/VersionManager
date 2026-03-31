@@ -1,0 +1,23 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+*.swp
+
+## Migrations (opcional - remova se quiser versionar)
+# **/Migrations/
+
+## Publicação
+publish/
+out/
+
+## Logs
+*.log
+logs/
+
+## Secrets
+appsettings.Production.json
+appsettings.Staging.json

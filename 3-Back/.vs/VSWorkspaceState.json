@@ -1,0 +1,12 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\MeuSistema.API",
+    "\\MeuSistema.Application",
+    "\\MeuSistema.Domain",
+    "\\MeuSistema.Infrastructure",
+    "\\MeuSistema.Shared"
+  ],
+  "SelectedNode": "\\MeuSistema.API\\MeuSistema.API.csproj",
+  "PreviewInSolutionExplorer": false
+}
