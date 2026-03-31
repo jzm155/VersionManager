@@ -500,7 +500,7 @@ function openEditVersionModal(version) {
             if (supabaseClient) {
                 const { error } = await supabaseClient
                     .from('Versao')
-                    .update({ Nome: novoNome, DataPublicacao: novaData })
+                    .update({ Titulo: novoNome, DataPublicacao: novaData })
                     .eq('Id', version.id);
                 if (error) throw error;
             }
