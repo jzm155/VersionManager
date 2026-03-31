@@ -1134,10 +1134,10 @@ function renderVersionForm(id = null) {
             if (supabaseClient) {
                 let error = null;
                 if (isEdit) {
-                    const res = await supabaseClient.from('Versao').update({ Nome: name, DataPublicacao: date }).eq('Id', id);
+                    const res = await supabaseClient.from('Versao').update({ Titulo: name, DataPublicacao: date }).eq('Id', id);
                     error = res.error;
                 } else {
-                    const res = await supabaseClient.from('Versao').insert({ Nome: name, DataPublicacao: date, Status: 2 });
+                    const res = await supabaseClient.from('Versao').insert({ Titulo: name, DataPublicacao: date, Status: 2 });
                     error = res.error;
                 }
                 if (error) throw error;
