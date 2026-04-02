@@ -271,7 +271,7 @@ async function renderVersions() {
     headerContainer.className = 'header-container';
     
     headerContainer.innerHTML = `
-        <h1>📋 Lista de Versões</h1>
+        <h1>Lista de Versões</h1>
         <button class="btn-primary" id="btn-add-version">Adicionar Versão</button>
     `;
 
@@ -946,6 +946,239 @@ function renderLogin() {
     };
 }
 
+// Função auxiliar para buscar métricas do backend
+async function fetchMetricsData() {
+    if (!supabaseClient) return null;
+    
+    try {
+        // Busca todas as versões com seus itens
+        const { data: versions, error: versionError } = await supabaseClient
+            .from('Versao')
+            .select('Id, Titulo, DataPublicacao, Status')
+            .order('DataPublicacao', { ascending: false });
+        
+        if (versionError) throw versionError;
+        
+        // Busca todos os itens
+        const { data: items, error: itemError } = await supabaseClient
+            .from('Item')
+            .select('Id, IdVersao, Data');
+        
+        if (itemError) throw itemError;
+        
+        return { versions, items };
+    } catch (error) {
+        console.error('Erro ao buscar métricas:', error);
+        return null;
+    }
+}
+
+// Função para processar métricas por período
+function processPeriodMetrics(versions, items) {
+    const monthsMap = new Map();
+    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    
+    versions.forEach(version => {
+        if (!version.DataPublicacao && !version.datapublicacao) return;
+        
+        const date = new Date(version.DataPublicacao || version.datapublicacao);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = `${monthNames[date.getMonth()]}/${date.getFullYear()}`;
+        
+        if (!monthsMap.has(monthKey)) {
+            monthsMap.set(monthKey, {
+                monthName,
+                totalVersions: 0,
+                completedVersions: 0,
+                pendingVersions: 0,
+                canceledVersions: 0,
+                totalItems: 0
+            });
+        }
+        
+        const monthData = monthsMap.get(monthKey);
+        monthData.totalVersions++;
+        
+        const status = version.Status || version.status;
+        if (status === 1) monthData.completedVersions++;
+        else if (status === 2) monthData.pendingVersions++;
+        else if (status === 3) monthData.canceledVersions++;
+        
+        // Conta itens desta versão
+        const versionId = version.Id || version.id;
+        const versionItems = items.filter(item => (item.IdVersao || item.idversao) === versionId);
+        monthData.totalItems += versionItems.length;
+    });
+    
+    // Converte para array e ordena por data (mais recente primeiro)
+    return Array.from(monthsMap.entries())
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .map(([key, data]) => data);
+}
+
+// Função para processar tendências
+function processTrends(versions) {
+    const monthsMap = new Map();
+    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    
+    versions.forEach(version => {
+        if (!version.DataPublicacao && !version.datapublicacao) return;
+        
+        const date = new Date(version.DataPublicacao || version.datapublicacao);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = `${monthNames[date.getMonth()]}/${String(date.getFullYear()).slice(2)}`;
+        
+        if (!monthsMap.has(monthKey)) {
+            monthsMap.set(monthKey, {
+                monthName,
+                completed: 0,
+                pending: 0,
+                canceled: 0
+            });
+        }
+        
+        const monthData = monthsMap.get(monthKey);
+        const status = version.Status || version.status;
+        
+        if (status === 1) monthData.completed++;
+        else if (status === 2) monthData.pending++;
+        else if (status === 3) monthData.canceled++;
+    });
+    
+    // Retorna últimos 6 meses ordenados
+    return Array.from(monthsMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .slice(-6)
+        .map(([key, data]) => data);
+}
+
+// Card de Métricas por Período
+function createPeriodMetricsCard(periodMetrics) {
+    const card = document.createElement('div');
+    card.className = 'metrics-card';
+    
+    card.innerHTML = `
+        <h2>📅 Métricas por Período</h2>
+        <div class="period-metrics-grid">
+            ${periodMetrics.slice(0, 6).map(period => `
+                <div class="period-card">
+                    <div class="period-header">
+                        <h3>${period.monthName}</h3>
+                    </div>
+                    <div class="period-stats">
+                        <div class="stat-row">
+                            <span class="stat-label">Versões:</span>
+                            <span class="stat-value">${period.totalVersions}</span>
+                        </div>
+                        <div class="stat-breakdown">
+                            <div class="stat-item success">
+                                <span>✅ ${period.completedVersions}</span>
+                            </div>
+                            <div class="stat-item warning">
+                                <span>⏳ ${period.pendingVersions}</span>
+                            </div>
+                            <div class="stat-item danger">
+                                <span>❌ ${period.canceledVersions}</span>
+                            </div>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Itens:</span>
+                            <span class="stat-value">${period.totalItems}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    return card;
+}
+
+// Card de Trends
+function createTrendsCard(trends) {
+    const card = document.createElement('div');
+    card.className = 'metrics-card';
+    
+    const maxValue = Math.max(...trends.map(t => Math.max(t.completed, t.pending, t.canceled)), 1);
+    
+    card.innerHTML = `
+        <h2>📈 Tendências de Status (Últimos 6 meses)</h2>
+        <div class="trends-chart">
+            <div class="chart-container">
+                ${trends.map(trend => `
+                    <div class="chart-bar-group">
+                        <div class="chart-label">${trend.monthName}</div>
+                        <div class="chart-bars">
+                            <div class="chart-bar success" style="height: ${(trend.completed / maxValue * 100)}%" title="Finalizadas: ${trend.completed}"></div>
+                            <div class="chart-bar warning" style="height: ${(trend.pending / maxValue * 100)}%" title="Pendentes: ${trend.pending}"></div>
+                            <div class="chart-bar danger" style="height: ${(trend.canceled / maxValue * 100)}%" title="Canceladas: ${trend.canceled}"></div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="chart-legend">
+                <div class="legend-item success">✅ Finalizadas</div>
+                <div class="legend-item warning">⏳ Pendentes</div>
+                <div class="legend-item danger">❌ Canceladas</div>
+            </div>
+        </div>
+    `;
+    return card;
+}
+
+// Renderizar Tela de Métricas
+async function renderMetrics() {
+    pageTitle.textContent = '📊 Métricas';
+    
+    toggleLoading(true);
+    
+    try {
+        const metricsData = await fetchMetricsData();
+        
+        if (!metricsData || !metricsData.versions) {
+            contentArea.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Não foi possível carregar as métricas.</div>';
+            return;
+        }
+        
+        const { versions, items } = metricsData;
+        
+        // Processa os dados
+        const periodMetrics = processPeriodMetrics(versions, items);
+        const trends = processTrends(versions);
+        
+        // Container principal
+        const container = document.createElement('div');
+        container.className = 'metrics-container';
+        
+        // Header
+        const headerContainer = document.createElement('div');
+        headerContainer.className = 'header-container';
+        headerContainer.innerHTML = '<h1>Dashboard de Métricas</h1>';
+        
+        // Limpa e adiciona conteúdo
+        contentArea.innerHTML = '';
+        contentArea.appendChild(headerContainer);
+        
+        // Adiciona cards de métricas
+        if (periodMetrics.length > 0) {
+            contentArea.appendChild(createPeriodMetricsCard(periodMetrics));
+        }
+        
+        if (trends.length > 0) {
+            contentArea.appendChild(createTrendsCard(trends));
+        }
+        
+        if (periodMetrics.length === 0 && trends.length === 0) {
+            contentArea.innerHTML += '<div style="text-align: center; padding: 40px; color: #666;">Nenhuma métrica disponível. Adicione versões com datas de publicação.</div>';
+        }
+        
+    } catch (error) {
+        console.error('Erro ao renderizar métricas:', error);
+        contentArea.innerHTML = '<div style="text-align: center; padding: 40px; color: #e74c3c;">Erro ao carregar métricas.</div>';
+    } finally {
+        toggleLoading(false);
+    }
+}
+
 // Nova funcionalidade: Gerar Relato
 function renderReportView(versionId) {
     const version = state.versions.find(v => v.id === versionId);
@@ -1145,7 +1378,7 @@ async function renderClients() {
     const container = document.createElement('div');
     container.innerHTML = `
         <div class="header-container">
-            <h1>👥 Gerenciamento de Clientes</h1>
+            <h1>Gerenciamento de Clientes</h1>
             <button class="btn-primary" id="btn-add-client">Adicionar Cliente</button>
         </div>
         <div class="table-responsive">
@@ -1534,6 +1767,9 @@ function navigateTo(route, param = null) {
             break;
         case 'clients':
             renderClients();
+            break;
+        case 'metrics':
+            renderMetrics();
             break;
         case 'client-form':
             renderClientForm(param);
