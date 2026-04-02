@@ -332,7 +332,9 @@ async function renderVersionDetail(versionId) {
     const statusInfo = getStatusInfo(version.status);
     const isPending = version.status === 2;
     const canReport = version.status !== 3;
+    // Permite editar nome da versão mesmo que finalizada, mas outras ações apenas se pendente
     const disabledAttr = !isPending ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : '';
+    const editDisabledAttr = ''; // Sempre permite editar nome
 
     container.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -340,7 +342,7 @@ async function renderVersionDetail(versionId) {
                 <button class="btn-secondary" id="btn-back" style="margin-right: 10px;">&larr; Voltar</button>
                 <span style="font-size: 1.2rem; font-weight: bold;">${version.name}</span>
                 <span style="color: #666; margin-left: 10px;">${version.date}</span>
-                <button class="btn-primary btn-sm" id="btn-edit-version-modal" title="Editar Detalhes" ${disabledAttr}>✏️ Editar</button>
+                <button class="btn-primary btn-sm" id="btn-edit-version-modal" title="Editar Nome da Versão" ${editDisabledAttr}>✏️ Editar Nome</button>
                 <span class="status-badge ${statusInfo.className}" style="margin-top:0;">${statusInfo.label}</span>
             </div>
             <div style="display: flex; gap: 10px;">
@@ -462,19 +464,28 @@ function openEditVersionModal(version) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     
+    // Verifica se versão está finalizada para limitar edição
+    const isFinalized = version.status === 1;
+    
     // Estrutura do Modal (reusando classes de form-card)
     overlay.innerHTML = `
         <div class="modal-content">
             <form id="modal-edit-form" class="form-card" style="margin: 0; max-width: 100%; box-shadow: none;">
-                <h2>Editar Versão</h2>
+                <h2>${isFinalized ? 'Editar Nome da Versão' : 'Editar Versão'}</h2>
                 <div class="form-group">
                     <label for="modal-version-name">Número da Versão</label>
                     <input type="text" id="modal-version-name" value="${version.name}" required>
                 </div>
+                ${!isFinalized ? `
                 <div class="form-group">
                     <label for="modal-version-date">Data de Lançamento</label>
                     <input type="date" id="modal-version-date" value="${version.date}">
                 </div>
+                ` : `
+                <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #27ae60;">
+                    <small style="color: #666;">⚠️ Versão finalizada. Apenas o nome pode ser editado.</small>
+                </div>
+                `}
                 <div class="form-actions">
                     <button type="button" class="btn-secondary" id="btn-modal-cancel">Cancelar</button>
                     <button type="submit" class="btn-primary">Salvar Alterações</button>
@@ -493,19 +504,24 @@ function openEditVersionModal(version) {
     document.getElementById('modal-edit-form').onsubmit = async (e) => {
         e.preventDefault();
         const novoNome = document.getElementById('modal-version-name').value;
-        const novaData = document.getElementById('modal-version-date').value;
+        const novaData = document.getElementById('modal-version-date')?.value;
+        const isFinalized = version.status === 1;
 
         toggleLoading(true);
         try {
             if (supabaseClient) {
+                // Se finalizada, atualiza apenas o nome
+                const updateData = isFinalized ? { Titulo: novoNome } : { Titulo: novoNome, DataPublicacao: novaData };
                 const { error } = await supabaseClient
                     .from('Versao')
-                    .update({ Titulo: novoNome, DataPublicacao: novaData })
+                    .update(updateData)
                     .eq('Id', version.id);
                 if (error) throw error;
             }
             version.name = novoNome;
-            version.date = novaData;
+            if (!isFinalized && novaData) {
+                version.date = novaData;
+            }
             close();
             renderVersionDetail(version.id); 
         } catch (err) {
