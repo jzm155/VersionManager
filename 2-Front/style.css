@@ -145,7 +145,8 @@ body {
 
 .status-finalizado {
     background-color: #27ae60;
-    color: white;
+    color: white !important;
+    font-weight: bold;
 }
 
 .status-cancelado {

@@ -258,7 +258,7 @@ async function renderVersions() {
     headerContainer.className = 'header-container';
     
     headerContainer.innerHTML = `
-        <h1>Lista de Versões</h1>
+        <h1>📋 Lista de Versões</h1>
         <button class="btn-primary" id="btn-add-version">Adicionar Versão</button>
     `;
 
@@ -838,7 +838,7 @@ function renderReportView(versionId) {
 
 // Renderizar Itens Pendentes (Placeholder)
 async function renderPending() {
-    pageTitle.textContent = 'Itens Pendentes';
+    pageTitle.textContent = '📝 Itens Pendentes';
     
     toggleLoading(true);
     try {
@@ -964,7 +964,7 @@ async function renderClients() {
     const container = document.createElement('div');
     container.innerHTML = `
         <div class="header-container">
-            <h1>Gerenciamento de Clientes</h1>
+            <h1>👥 Gerenciamento de Clientes</h1>
             <button class="btn-primary" id="btn-add-client">Adicionar Cliente</button>
         </div>
         <div class="table-responsive">
