@@ -157,6 +157,74 @@ body {
 }
 
 /* ==========================================================================
+   Estilos de Filtros
+   ========================================================================== */
+
+.filters-container {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #e1e4e8;
+}
+
+.filters-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr auto;
+    gap: 15px;
+    align-items: end;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.filter-group label {
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #333;
+    font-size: 0.9rem;
+}
+
+.filter-group input,
+.filter-group select {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
+}
+
+.filter-group input:focus,
+.filter-group select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.filter-group input::placeholder {
+    color: #999;
+}
+
+#btn-clear-filters {
+    padding: 8px 16px;
+    white-space: nowrap;
+}
+
+/* Responsividade dos filtros */
+@media (max-width: 768px) {
+    .filters-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .filter-group {
+        width: 100%;
+    }
+}
+
+/* ==========================================================================
    Estilos de Formulários (V3)
    ========================================================================== */
 

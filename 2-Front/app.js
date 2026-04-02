@@ -255,11 +255,13 @@ function updateUserDisplay() {
 
 // Etapa 2: Renderizar Tela de Versões
 async function renderVersions() {
+    console.log('renderVersions called');
     pageTitle.textContent = 'Versões';
     
     toggleLoading(true);
     try {
         if (supabaseClient) await refreshVersionsState();
+        console.log('Versions state:', state.versions);
     } finally {
         toggleLoading(false);
     }
@@ -273,34 +275,116 @@ async function renderVersions() {
         <button class="btn-primary" id="btn-add-version">Adicionar Versão</button>
     `;
 
+    // Container de filtros
+    const filtersContainer = document.createElement('div');
+    filtersContainer.className = 'filters-container';
+    
+    filtersContainer.innerHTML = `
+        <div class="filters-row">
+            <div class="filter-group">
+                <label for="filter-search">Buscar por nome:</label>
+                <input type="text" id="filter-search" placeholder="Digite o nome da versão...">
+            </div>
+            <div class="filter-group">
+                <label for="filter-status">Status:</label>
+                <select id="filter-status">
+                    <option value="">Todos</option>
+                    <option value="1">Finalizado</option>
+                    <option value="2">Pendente</option>
+                    <option value="3">Cancelado</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-date">Data de lançamento:</label>
+                <input type="date" id="filter-date">
+            </div>
+            <div class="filter-group">
+                <button class="btn-secondary" id="btn-clear-filters">Limpar Filtros</button>
+            </div>
+        </div>
+    `;
+
     // Grid de versões
     const grid = document.createElement('div');
     grid.className = 'versions-grid';
 
-    state.versions.forEach(version => {
-        const card = document.createElement('div');
-        card.className = 'version-card';
-        // Evento de clique para ir para detalhes
-        card.onclick = () => renderVersionDetail(version.id);
-        
-        const statusInfo = getStatusInfo(version.status);
+    // Função para filtrar e renderizar versões
+    function renderFilteredVersions() {
+        const searchTerm = document.getElementById('filter-search').value.toLowerCase();
+        const statusFilter = document.getElementById('filter-status').value;
+        const dateFilter = document.getElementById('filter-date').value;
 
-        card.innerHTML = `
-            <h3>${version.name}</h3>
-            <span style="display:block; margin-bottom: 10px;">Lançamento: ${formatDateToBR(version.date)}</span>
-            <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
-        `;
-        grid.appendChild(card);
-    });
+        // Limpa grid
+        grid.innerHTML = '';
+
+        // Filtra versões
+        const filteredVersions = state.versions.filter(version => {
+            // Filtro por nome
+            if (searchTerm && !version.name.toLowerCase().includes(searchTerm)) {
+                return false;
+            }
+
+            // Filtro por status
+            if (statusFilter && version.status != parseInt(statusFilter)) {
+                return false;
+            }
+
+            // Filtro por data
+            if (dateFilter && version.date !== dateFilter) {
+                return false;
+            }
+
+            return true;
+        });
+
+        // Renderiza versões filtradas
+        filteredVersions.forEach(version => {
+            const card = document.createElement('div');
+            card.className = 'version-card';
+            // Evento de clique para ir para detalhes
+            card.onclick = () => renderVersionDetail(version.id);
+            
+            const statusInfo = getStatusInfo(version.status);
+
+            card.innerHTML = `
+                <h3>${version.name}</h3>
+                <span style="display:block; margin-bottom: 10px;">Lançamento: ${formatDateToBR(version.date)}</span>
+                <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
+            `;
+            grid.appendChild(card);
+        });
+
+        // Mensagem se não houver resultados
+        if (filteredVersions.length === 0) {
+            grid.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Nenhuma versão encontrada com os filtros aplicados.</div>';
+        }
+    }
 
     // Limpa e popula a área de conteúdo
     contentArea.innerHTML = '';
     contentArea.appendChild(headerContainer);
+    contentArea.appendChild(filtersContainer);
     contentArea.appendChild(grid);
+
+    // Adiciona eventos dos filtros (APÓS adicionar ao DOM)
+    document.getElementById('filter-search').addEventListener('input', renderFilteredVersions);
+    document.getElementById('filter-status').addEventListener('change', renderFilteredVersions);
+    document.getElementById('filter-date').addEventListener('change', renderFilteredVersions);
+    
+    document.getElementById('btn-clear-filters').addEventListener('click', () => {
+        document.getElementById('filter-search').value = '';
+        document.getElementById('filter-status').value = '';
+        document.getElementById('filter-date').value = '';
+        renderFilteredVersions();
+    });
+
+    // Renderiza inicialmente
+    renderFilteredVersions();
 
     // Ação do botão
     document.getElementById('btn-add-version').onclick = () => navigateTo('version-form');
 
+    console.log('renderVersions completed successfully');
 }
 
 // Etapa 3: Detalhes da Versão
@@ -1531,12 +1615,6 @@ async function debugItemClienteTable() {
         console.error('Erro no debug:', error);
     }
 }
-
-// Executar debug quando a página carregar
-setTimeout(() => {
-    console.log('Iniciando debug da tabela ItemCliente...');
-    debugItemClienteTable();
-}, 2000);
 
 // Inicia a aplicação
 initializeApp();
