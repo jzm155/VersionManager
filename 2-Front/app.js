@@ -948,25 +948,94 @@ function renderLogin() {
 
 // Função auxiliar para buscar métricas do backend
 async function fetchMetricsData() {
-    if (!supabaseClient) return null;
+    console.log('=== DEBUG fetchMetricsData ===');
+    
+    if (!supabaseClient) {
+        console.log('SupabaseClient não disponível');
+        return null;
+    }
     
     try {
         // Busca todas as versões com seus itens
+        console.log('Buscando versões...');
         const { data: versions, error: versionError } = await supabaseClient
             .from('Versao')
             .select('Id, Titulo, DataPublicacao, Status')
             .order('DataPublicacao', { ascending: false });
         
         if (versionError) throw versionError;
+        console.log('Versões encontradas:', versions?.length || 0);
         
         // Busca todos os itens
+        console.log('Buscando itens...');
         const { data: items, error: itemError } = await supabaseClient
             .from('Item')
-            .select('Id, IdVersao, Data');
+            .select('Id, IdVersao, Data, Descricao, Migration, IdCliente');
         
         if (itemError) throw itemError;
+        console.log('Itens encontrados:', items?.length || 0);
         
-        return { versions, items };
+        // Enriquece itens com clientes usando a API existente
+        if (items && items.length > 0) {
+            console.log('Enriquecendo itens com clientes...');
+            try {
+                const itemIds = items.map(item => item.Id || item.id);
+                const { itemsMap } = await ClientesAPI.buscarItensComClientes(supabaseClient, itemIds);
+                
+                // Adiciona os clientes encontrados a cada item
+                items.forEach(item => {
+                    const itemId = item.Id || item.id;
+                    if (itemsMap[itemId] && itemsMap[itemId].length > 0) {
+                        item.clientIds = itemsMap[itemId];
+                        console.log(`Item ${itemId} tem ${itemsMap[itemId].length} clientes:`, itemsMap[itemId]);
+                    }
+                });
+            } catch (error) {
+                console.warn('Erro ao enriquecer itens com clientes:', error);
+            }
+        }
+        
+        // Busca todos os clientes
+        console.log('Buscando clientes...');
+        const { data: clients, error: clientError } = await supabaseClient
+            .from('Cliente')
+            .select('Id, Nome');
+        
+        if (clientError) throw clientError;
+        console.log('Clientes encontrados:', clients?.length || 0);
+        
+        // Busca relacionamentos ItemCliente
+        console.log('Buscando relacionamentos ItemCliente...');
+        const { data: itemClients, error: itemClientError } = await supabaseClient
+            .from('ItemCliente')
+            .select('IdItem, IdCliente');
+        
+        // Se ItemCliente não existir ou der erro, usa fallback
+        let itemClientData = itemClients;
+        if (itemClientError) {
+            console.warn('Tabela ItemCliente não encontrada, usando IdCliente dos itens. Erro:', itemClientError);
+            itemClientData = null;
+        } else {
+            console.log('Relacionamentos ItemCliente encontrados:', itemClients?.length || 0);
+        }
+        
+        // Mostra amostra dos dados para debug
+        if (items && items.length > 0) {
+            console.log('Amostra de itens:', items.slice(0, 3).map(item => ({
+                id: item.Id || item.id,
+                descricao: item.Descricao || item.descricao,
+                idCliente: item.IdCliente || item.idcliente,
+                migration: item.Migration || item.migration
+            })));
+        }
+        
+        if (clients && clients.length > 0) {
+            console.log('Amostra de clientes:', clients.slice(0, 3));
+        }
+        
+        console.log('=== FIM DEBUG fetchMetricsData ===');
+        
+        return { versions, items, clients, itemClients: itemClientData };
     } catch (error) {
         console.error('Erro ao buscar métricas:', error);
         return null;
@@ -1014,6 +1083,140 @@ function processPeriodMetrics(versions, items) {
     return Array.from(monthsMap.entries())
         .sort((a, b) => b[0].localeCompare(a[0]))
         .map(([key, data]) => data);
+}
+
+// Função para processar métricas de itens por clientes
+function processClientMetrics(items, clients, itemClients) {
+    console.log('=== DEBUG processClientMetrics ===');
+    console.log('Items recebidos:', items?.length || 0);
+    console.log('Clients recebidos:', clients?.length || 0);
+    console.log('ItemClients recebidos:', itemClients?.length || 0);
+    
+    const clientMetrics = new Map();
+    
+    // Inicializa métricas para todos os clientes
+    clients.forEach(client => {
+        const clientId = client.Id || client.id;
+        const clientName = client.Nome || client.nome || client.Name || client.name;
+        
+        console.log(`Cliente encontrado: ${clientName} (ID: ${clientId})`);
+        
+        clientMetrics.set(clientId, {
+            clientName,
+            totalItems: 0,
+            migrationItems: 0,
+            regularItems: 0,
+            items: [] // Array para guardar detalhes dos itens
+        });
+    });
+    
+    console.log('Map de clientes inicializado:', clientMetrics.size);
+    
+    // Processa cada item
+    items.forEach((item, index) => {
+        const itemId = item.Id || item.id;
+        
+        // Validação melhor dos dados do item
+        const itemDescricao = item.Descricao || item.descricao || '';
+        const itemData = item.Data || item.data || '';
+        const isMigration = !!(item.Migration || item.migration);
+        
+        // Skip itens sem descrição válida ou que parecem ser nomes de clientes
+        if (!itemDescricao || itemDescricao.trim() === '') {
+            console.log(`Item ${itemId} sem descrição válida, pulando...`);
+            return;
+        }
+        
+        // Verifica se a descrição corresponde a um nome de cliente existente
+        const isClientName = clients.some(client => {
+            const clientName = (client.Nome || client.nome || client.Name || client.name || '').toLowerCase();
+            return clientName === itemDescricao.toLowerCase();
+        });
+        
+        if (isClientName) {
+            console.log(`Item ${itemId} com nome de cliente: "${itemDescricao}", pulando...`);
+            return;
+        }
+        
+        // Verifica se a descrição é muito curta (possivelmente só nome de cliente)
+        if (itemDescricao.length <= 20 && !isMigration && !itemData) {
+            console.log(`Item ${itemId} com descrição suspeita (possível nome de cliente): "${itemDescricao}", pulando...`);
+            return;
+        }
+        
+        console.log(`Processando item ${index + 1}:`, {
+            id: itemId,
+            descricao: itemDescricao,
+            idCliente: item.IdCliente || item.idcliente,
+            migration: isMigration,
+            data: itemData
+        });
+        
+        // Determina clientes do item
+        let itemClientIds = [];
+        
+        // Primeiro tenta usar os dados enriquecidos da API
+        if (item.clientIds && item.clientIds.length > 0) {
+            itemClientIds = item.clientIds;
+            console.log(`Usando clientIds enriquecidos do item:`, itemClientIds);
+        } else if (itemClients && itemClients.length > 0) {
+            // Usa tabela de relacionamento
+            const relationships = itemClients.filter(ic => (ic.IdItem || ic.iditem) === itemId);
+            console.log(`Relacionamentos encontrados para item ${itemId}:`, relationships.length);
+            itemClientIds = relationships.map(r => r.IdCliente || r.idcliente);
+        } else if (item.IdCliente || item.idcliente) {
+            // Fallback: usa IdCliente do item (se existir)
+            itemClientIds = [item.IdCliente || item.idcliente];
+            console.log(`Usando IdCliente do item: ${itemClientIds[0]}`);
+        } else {
+            console.log(`Item ${itemId} não tem cliente associado`);
+        }
+        
+        // Se não encontrou clientes, pula este item
+        if (itemClientIds.length === 0) {
+            console.log(`Item ${itemId} sem clientes, pulando...`);
+            return;
+        }
+        
+        console.log(`Item ${itemId} clientes:`, itemClientIds);
+        
+        // Adiciona o item a cada cliente associado
+        itemClientIds.forEach(clientId => {
+            const clientMetric = clientMetrics.get(clientId);
+            if (clientMetric) {
+                clientMetric.totalItems++;
+                
+                if (isMigration) {
+                    clientMetric.migrationItems++;
+                } else {
+                    clientMetric.regularItems++;
+                }
+                
+                // Adiciona detalhes do item com validação
+                clientMetric.items.push({
+                    id: itemId,
+                    description: itemDescricao,
+                    migration: isMigration,
+                    date: itemData
+                });
+                
+                console.log(`Item ${itemId} adicionado ao cliente ${clientId} - Total: ${clientMetric.totalItems}`);
+            } else {
+                console.log(`Cliente ${clientId} não encontrado no mapa`);
+            }
+        });
+    });
+    
+    // Converte para array e ordena por total de itens (decrescente)
+    const result = Array.from(clientMetrics.entries())
+        .map(([clientId, data]) => ({ clientId, ...data }))
+        .filter(client => client.totalItems > 0) // Apenas clientes com itens
+        .sort((a, b) => b.totalItems - a.totalItems);
+    
+    console.log('Resultado final:', result);
+    console.log('=== FIM DEBUG processClientMetrics ===');
+    
+    return result;
 }
 
 // Função para processar tendências
@@ -1093,6 +1296,70 @@ function createPeriodMetricsCard(periodMetrics) {
     return card;
 }
 
+// Card de Métricas por Cliente
+function createClientMetricsCard(clientMetrics) {
+    const card = document.createElement('div');
+    card.className = 'metrics-card';
+    
+    card.innerHTML = `
+        <h2>👥 Itens por Cliente</h2>
+        <div class="client-metrics-grid">
+            ${clientMetrics.map(client => `
+                <div class="client-card">
+                    <div class="client-header">
+                        <h3>${client.clientName}</h3>
+                        <span class="total-badge">${client.totalItems} itens</span>
+                    </div>
+                    <div class="client-stats">
+                        <div class="stat-row">
+                            <span class="stat-label">Total:</span>
+                            <span class="stat-value">${client.totalItems}</span>
+                        </div>
+                        <div class="stat-breakdown">
+                            <div class="stat-item migration">
+                                <span>🔄 ${client.migrationItems}</span>
+                            </div>
+                            <div class="stat-item regular">
+                                <span>📝 ${client.regularItems}</span>
+                            </div>
+                        </div>
+                        <div class="migration-percentage">
+                            <span class="stat-label">Migrations:</span>
+                            <span class="stat-value">${client.totalItems > 0 ? Math.round(client.migrationItems / client.totalItems * 100) : 0}%</span>
+                        </div>
+                    </div>
+                    <div class="client-items-toggle">
+                        <button class="btn-toggle-items" data-client="${client.clientId}">Ver itens ▼</button>
+                    </div>
+                    <div class="client-items-list" id="items-${client.clientId}" style="display: none;">
+                        ${client.items.map(item => `
+                            <div class="item-detail ${item.migration ? 'migration-item' : 'regular-item'}">
+                                <span class="item-icon">${item.migration ? '🔄' : '📝'}</span>
+                                <span class="item-description">${item.description}</span>
+                                <span class="item-date">${formatDateToBR(item.date)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    
+    // Adiciona eventos para expandir/recolher lista de itens
+    card.querySelectorAll('.btn-toggle-items').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const clientId = e.target.dataset.client;
+            const itemsList = document.getElementById(`items-${clientId}`);
+            const isExpanded = itemsList.style.display !== 'none';
+            
+            itemsList.style.display = isExpanded ? 'none' : 'block';
+            e.target.textContent = isExpanded ? 'Ver itens ▼' : 'Ocultar itens ▲';
+        });
+    });
+    
+    return card;
+}
+
 // Card de Trends
 function createTrendsCard(trends) {
     const card = document.createElement('div');
@@ -1127,7 +1394,7 @@ function createTrendsCard(trends) {
 
 // Renderizar Tela de Métricas
 async function renderMetrics() {
-    pageTitle.textContent = '📊 Métricas';
+    pageTitle.textContent = 'Métricas';
     
     toggleLoading(true);
     
@@ -1139,11 +1406,12 @@ async function renderMetrics() {
             return;
         }
         
-        const { versions, items } = metricsData;
+        const { versions, items, clients, itemClients } = metricsData;
         
         // Processa os dados
         const periodMetrics = processPeriodMetrics(versions, items);
         const trends = processTrends(versions);
+        const clientMetrics = processClientMetrics(items, clients, itemClients);
         
         // Container principal
         const container = document.createElement('div');
@@ -1163,12 +1431,16 @@ async function renderMetrics() {
             contentArea.appendChild(createPeriodMetricsCard(periodMetrics));
         }
         
+        if (clientMetrics.length > 0) {
+            contentArea.appendChild(createClientMetricsCard(clientMetrics));
+        }
+        
         if (trends.length > 0) {
             contentArea.appendChild(createTrendsCard(trends));
         }
         
-        if (periodMetrics.length === 0 && trends.length === 0) {
-            contentArea.innerHTML += '<div style="text-align: center; padding: 40px; color: #666;">Nenhuma métrica disponível. Adicione versões com datas de publicação.</div>';
+        if (periodMetrics.length === 0 && trends.length === 0 && clientMetrics.length === 0) {
+            contentArea.innerHTML += '<div style="text-align: center; padding: 40px; color: #666;">Nenhuma métrica disponível. Adicione versões com datas de publicação ou itens vinculados a clientes.</div>';
         }
         
     } catch (error) {
@@ -1248,7 +1520,7 @@ function renderReportView(versionId) {
 
 // Renderizar Itens Pendentes (Placeholder)
 async function renderPending() {
-    pageTitle.textContent = '📝 Itens Pendentes';
+    pageTitle.textContent = 'Itens Pendentes';
     
     toggleLoading(true);
     try {
