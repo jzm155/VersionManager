@@ -129,10 +129,21 @@ const navLinks = document.querySelectorAll('.nav-link');
 
 // --- Funções de Renderização ---
 
-// Helper para obter nome do cliente
-function getClientName(clientId) {
-    // Usa '==' para garantir compatibilidade entre string (UUID) e int
-    const client = state.clients.find(c => c.id == clientId);
+// Helper para obter nome do cliente (suporta múltiplos clientes)
+function getClientName(clientIds) {
+    if (!clientIds) return 'Desconhecido';
+    
+    // Se for array (múltiplos clientes)
+    if (Array.isArray(clientIds)) {
+        const names = clientIds.map(id => {
+            const client = state.clients.find(c => c.id == id);
+            return client ? client.name : 'Desconhecido';
+        });
+        return names.join(', ');
+    }
+    
+    // Se for único (legado)
+    const client = state.clients.find(c => c.id == clientIds);
     return client ? client.name : 'Desconhecido';
 }
 
@@ -311,6 +322,10 @@ async function renderVersionDetail(versionId) {
 
             if (data) {
                 const mappedItems = data.map(mapDatabaseItemToLocal);
+                
+                // Enriquece itens com clientes da tabela de relacionamento
+                await enrichItemsWithClients(mappedItems);
+                
                 // Atualiza o estado local: remove itens antigos desta versão e insere os atualizados
                 state.items = state.items.filter(i => i.versionId !== versionId).concat(mappedItems);
             }
@@ -371,7 +386,7 @@ async function renderVersionDetail(versionId) {
                             <td>${item.name}</td>
                             <td>${formatDateToBR(item.date)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
-                            <td>${getClientName(item.clientId)}</td>
+                            <td>${getClientName(item.clientIds || item.clientId)}</td>
                             <td style="text-align: right;">
                                 <button class="btn-primary btn-sm btn-edit-item" data-id="${item.id}" ${disabledAttr}>Editar</button>
                                 <button class="btn-secondary btn-sm btn-del-item" data-id="${item.id}" style="background-color: #e74c3c;" ${disabledAttr}>Excluir</button>
@@ -507,6 +522,18 @@ function openEditVersionModal(version) {
         const novaData = document.getElementById('modal-version-date')?.value;
         const isFinalized = version.status === 1;
 
+        // Validação: Data de lançamento não pode ser anterior à data atual (apenas se não for finalizada)
+        if (!isFinalized && novaData) {
+            const releaseDate = new Date(novaData);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); // Zera a hora para comparar apenas a data
+            
+            if (releaseDate < today) {
+                showModal('Erro', 'A Data de Lançamento não pode ser anterior à data atual.');
+                return;
+            }
+        }
+
         toggleLoading(true);
         try {
             if (supabaseClient) {
@@ -533,14 +560,43 @@ function openEditVersionModal(version) {
 }
 
 // Função para abrir o Modal de Item (Criar/Editar)
-function openItemModal(item = null, versionId = null, onSuccess = null) {
+async function openItemModal(item = null, versionId = null, onSuccess = null) {
     const isEdit = item !== null;
     
-    // Gera opções de clientes
-    const clientOptions = state.clients
+    // Se for edição, busca os clientes do banco
+    let itemClientIds = [];
+    if (isEdit && supabaseClient && item) {
+        console.log('Editando item:', item);
+        console.log('Item.clientIds:', item.clientIds);
+        console.log('Item.clientId:', item.clientId);
+        
+        const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.id);
+        console.log('Resultado da busca de clientes:', result);
+        
+        if (result.success) {
+            itemClientIds = result.clienteIds;
+            console.log('Clientes encontrados no banco:', itemClientIds);
+        } else {
+            console.error('Erro ao buscar clientes:', result.error);
+        }
+    } else if (isEdit && item && item.clientIds) {
+        itemClientIds = item.clientIds;
+        console.log('Usando clientIds do item local:', itemClientIds);
+    }
+    
+    // Gera checkboxes para clientes
+    const clientCheckboxes = state.clients
         .filter(c => c.active)
-        .map(c => `<option value="${c.id}" ${item && item.clientId === c.id ? 'selected' : ''}>${c.name}</option>`)
-        .join('');
+        .map(c => {
+            const isChecked = itemClientIds.includes(c.id) ? 'checked' : '';
+            console.log(`Cliente ${c.name} (ID: ${c.id}): ${isChecked ? 'marcado' : 'desmarcado'}`);
+            return `
+                <div class="checkbox-label" style="margin-bottom: 8px;">
+                    <input type="checkbox" id="client-${c.id}" name="clients" value="${c.id}" ${isChecked}>
+                    <label for="client-${c.id}" style="font-weight: normal;">${c.name}</label>
+                </div>
+            `;
+        }).join('');
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -566,10 +622,10 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                     <input type="text" id="modal-item-url" value="${item ? item.url : ''}">
                 </div>
                 <div class="form-group">
-                    <label for="modal-item-client">Cliente</label>
-                    <select id="modal-item-client" required>
-                        ${clientOptions}
-                    </select>
+                    <label>Clientes (selecione um ou mais)</label>
+                    <div style="max-height: 150px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                        ${clientCheckboxes}
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="checkbox-label">
@@ -593,15 +649,27 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
     document.getElementById('modal-item-form').onsubmit = async (e) => {
         e.preventDefault();
         
+        // Coleta múltiplos clientes selecionados
+        const selectedClients = Array.from(document.querySelectorAll('input[name="clients"]:checked'))
+            .map(checkbox => parseInt(checkbox.value));
+        
+        if (selectedClients.length === 0) {
+            showModal('Erro', 'Selecione pelo menos um cliente.');
+            return;
+        }
+        
         const payload = {
             Numero: document.getElementById('modal-item-ticket').value,
             Descricao: document.getElementById('modal-item-name').value,
             Data: document.getElementById('modal-item-date').value,
             Url: document.getElementById('modal-item-url').value,
             Migration: document.getElementById('modal-item-migration').checked,
-            IdCliente: parseInt(document.getElementById('modal-item-client').value),
+            IdCliente: selectedClients.length > 0 ? selectedClients[0] : null, // Usa apenas o primeiro por enquanto
             IdVersao: versionId // VINCULA AUTOMATICAMENTE SE FOR PASSADO
         };
+        
+        // Armazena múltiplos clientes no localStorage para exibição
+        const itemClientIds = selectedClients;
         
         toggleLoading(true);
         try {
@@ -611,7 +679,15 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                 
                 // Adiciona ao estado local para aparecer na lista imediatamente
                 if (data && data.length > 0) {
-                    state.items.push(mapDatabaseItemToLocal(data[0]));
+                    const newItem = mapDatabaseItemToLocal(data[0]);
+                    const itemId = data[0].Id || data[0].id;
+                    
+                    // Salva múltiplos clientes na tabela de relacionamento
+                    await ClientesAPI.salvarClientesItem(supabaseClient, itemId, itemClientIds);
+                    
+                    // Sobrescreve com os clientes selecionados localmente
+                    newItem.clientIds = itemClientIds;
+                    state.items.push(newItem);
                 }
             } else {
                 // Fallback Mock
@@ -624,6 +700,7 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                     url: payload.Url,
                     migration: payload.Migration,
                     clientId: payload.IdCliente,
+                    clientIds: selectedClients,
                     versionId: payload.IdVersao
                 });
             }
@@ -653,7 +730,7 @@ function openLinkExistingItemsModal(versionId, onSuccess) {
     const itemsHtml = pendingItems.map(item => `
         <label class="checkbox-label" style="padding: 8px; border-radius: 4px; transition: background-color 0.2s; cursor: pointer; display: block; border-bottom: 1px solid #f0f0f0;">
             <input type="checkbox" class="item-to-link" value="${item.id}" style="margin-right: 15px;">
-            <span><strong>${item.ticket || 'S/N'}:</strong> ${item.name} <em style="color: #7f8c8d;">(${getClientName(item.clientId)})</em></span>
+            <span><strong>${item.ticket || 'S/N'}:</strong> ${item.name} <em style="color: #7f8c8d;">(${getClientName(item.clientIds || item.clientId)})</em></span>
         </label>
     `).join('');
 
@@ -876,6 +953,10 @@ async function renderPending() {
             // Atualiza estado local com os itens pendentes do banco
             if (data) {
                 const mappedItems = data.map(mapDatabaseItemToLocal);
+                
+                // Enriquece itens com clientes da tabela de relacionamento
+                await enrichItemsWithClients(mappedItems);
+                
                 // Substitui itens pendentes no state
                 state.items = state.items.filter(i => i.versionId).concat(mappedItems);
             }
@@ -914,7 +995,7 @@ async function renderPending() {
                             <td><a href="${item.url.startsWith('http') ? item.url : 'https://' + item.url}" target="_blank">${item.ticket || 'Link'}</a></td>
                             <td>${item.name}</td>
                             <td>${formatDateToBR(item.date)}</td>
-                            <td>${getClientName(item.clientId)}</td>
+                            <td>${getClientName(item.clientIds || item.clientId)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
                             <td style="text-align: right;">
                                 <button class="btn-primary btn-sm btn-edit-item" data-id="${item.id}">Editar</button>
@@ -1145,6 +1226,18 @@ function renderVersionForm(id = null) {
         const name = e.target.versionName.value;
         const date = e.target.versionDate.value;
 
+        // Validação: Data de lançamento não pode ser anterior à data atual
+        if (date) {
+            const releaseDate = new Date(date);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); // Zera a hora para comparar apenas a data
+            
+            if (releaseDate < today) {
+                showModal('Erro', 'A Data de Lançamento não pode ser anterior à data atual.');
+                return;
+            }
+        }
+
         toggleLoading(true);
         try {
             if (supabaseClient) {
@@ -1173,16 +1266,45 @@ function renderVersionForm(id = null) {
 }
 
 // Etapa 7: Formulário de Item (Cadastro/Edição)
-function renderItemForm(id = null) {
+async function renderItemForm(id = null) {
     const isEdit = id !== null;
     const item = isEdit ? state.items.find(i => i.id == id) : null;
 
     pageTitle.textContent = isEdit ? 'Editar Item' : 'Novo Item';
 
-    const clientOptions = state.clients
+    // Se for edição, busca os clientes do banco
+    let itemClientIds = [];
+    if (isEdit && supabaseClient && item) {
+        console.log('Editando item no formulário:', item);
+        console.log('Item.clientIds:', item.clientIds);
+        console.log('Item.clientId:', item.clientId);
+        
+        const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.id);
+        console.log('Resultado da busca de clientes (form):', result);
+        
+        if (result.success) {
+            itemClientIds = result.clienteIds;
+            console.log('Clientes encontrados no banco (form):', itemClientIds);
+        } else {
+            console.error('Erro ao buscar clientes (form):', result.error);
+        }
+    } else if (isEdit && item && item.clientIds) {
+        itemClientIds = item.clientIds;
+        console.log('Usando clientIds do item local (form):', itemClientIds);
+    }
+
+    // Gera checkboxes para clientes
+    const clientCheckboxes = state.clients
         .filter(c => c.active)
-        .map(c => `<option value="${c.id}" ${item && item.clientId == c.id ? 'selected' : ''}>${c.name}</option>`)
-        .join('');
+        .map(c => {
+            const isChecked = itemClientIds.includes(c.id) ? 'checked' : '';
+            return `
+                <div class="checkbox-label" style="margin-bottom: 8px;">
+                    <input type="checkbox" id="item-client-${c.id}" name="clients" value="${c.id}" ${isChecked}>
+                    <label for="item-client-${c.id}" style="font-weight: normal;">${c.name}</label>
+                </div>
+            `;
+        }).join('');
 
     const formContainer = document.createElement('div');
     formContainer.innerHTML = `
@@ -1201,14 +1323,14 @@ function renderItemForm(id = null) {
                 <input type="date" id="item-date" name="itemDate" value="${item ? item.date : ''}" required>
             </div>
             <div class="form-group">
-                <label for="item-url">URL (Jira, Git, etc)</label>
+                <label for="item-url">URL (Jira, Git, Monday, etc)</label>
                 <input type="text" id="item-url" name="itemUrl" value="${item ? item.url : ''}">
             </div>
             <div class="form-group">
-                <label for="item-client">Cliente</label>
-                <select id="item-client" name="itemClient" required>
-                    ${clientOptions}
-                </select>
+                <label>Clientes (selecione um ou mais)</label>
+                <div style="max-height: 150px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                    ${clientCheckboxes}
+                </div>
             </div>
             <div class="form-group">
                 <label class="checkbox-label">
@@ -1231,13 +1353,22 @@ function renderItemForm(id = null) {
         e.preventDefault();
         const form = e.target;
         
+        // Coleta múltiplos clientes selecionados
+        const selectedClients = Array.from(form.querySelectorAll('input[name="clients"]:checked'))
+            .map(checkbox => parseInt(checkbox.value));
+        
+        if (selectedClients.length === 0) {
+            showModal('Erro', 'Selecione pelo menos um cliente.');
+            return;
+        }
+        
         const payload = {
             Numero: form.itemTicket.value,
             Descricao: form.itemName.value,
             Data: form.itemDate.value,
             Url: form.itemUrl.value,
             Migration: form.itemMigration.checked,
-            IdCliente: form.itemClient.value ? parseInt(form.itemClient.value) : null
+            IdCliente: selectedClients.length > 0 ? selectedClients[0] : null // Usa apenas o primeiro por enquanto
         };
 
         if (supabaseClient) {
@@ -1246,11 +1377,22 @@ function renderItemForm(id = null) {
             if (isEdit) {
                 const res = await supabaseClient.from('Item').update(payload).eq('Id', id);
                 error = res.error;
+                
+                // Atualiza múltiplos clientes na tabela de relacionamento
+                if (!error) {
+                    await ClientesAPI.salvarClientesItem(supabaseClient, id, selectedClients);
+                }
             } else {
                 // Novo item (VersaoId padrão null no banco ou omitido)
                 payload.IdVersao = null;
-                const res = await supabaseClient.from('Item').insert([payload]);
+                const res = await supabaseClient.from('Item').insert([payload]).select();
                 error = res.error;
+                
+                // Salva múltiplos clientes na tabela de relacionamento
+                if (!error && res.data && res.data.length > 0) {
+                    const itemId = res.data[0].Id || res.data[0].id;
+                    await ClientesAPI.salvarClientesItem(supabaseClient, itemId, selectedClients);
+                }
             }
 
             if (error) {
@@ -1266,6 +1408,7 @@ function renderItemForm(id = null) {
                 item.url = payload.Url;
                 item.migration = payload.Migration;
                 item.clientId = payload.IdCliente;
+                item.clientIds = selectedClients;
             } else {
                 const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
                 state.items.push({
@@ -1276,6 +1419,7 @@ function renderItemForm(id = null) {
                     url: payload.Url,
                     migration: payload.Migration,
                     clientId: payload.IdCliente,
+                    clientIds: selectedClients,
                     versionId: null
                 });
             }
@@ -1343,6 +1487,57 @@ function initializeApp() {
     }
 }
 
+// Helper para verificar estado da tabela ItemCliente
+async function debugItemClienteTable() {
+    if (!supabaseClient) return;
+    
+    try {
+        console.log('=== DEBUG ItemCliente ===');
+        
+        // 1. Verificar se tabela existe
+        const { data: tableData, error: tableError } = await supabaseClient
+            .from('ItemCliente')
+            .select('*')
+            .limit(5);
+        
+        if (tableError) {
+            console.error('Tabela ItemCliente não acessível:', tableError);
+            return;
+        }
+        
+        console.log('Dados na tabela ItemCliente:', tableData);
+        
+        // 2. Verificar itens existentes
+        const { data: itemsData, error: itemsError } = await supabaseClient
+            .from('Item')
+            .select('Id, Descricao, IdCliente')
+            .limit(5);
+        
+        if (itemsError) {
+            console.error('Erro ao buscar itens:', itemsError);
+            return;
+        }
+        
+        console.log('Itens existentes:', itemsData);
+        
+        // 3. Para cada item, verificar seus clientes
+        for (const item of itemsData || []) {
+            const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.Id);
+            console.log(`Item ${item.Id} (${item.Descricao}):`, result);
+        }
+        
+        console.log('=== FIM DEBUG ===');
+    } catch (error) {
+        console.error('Erro no debug:', error);
+    }
+}
+
+// Executar debug quando a página carregar
+setTimeout(() => {
+    console.log('Iniciando debug da tabela ItemCliente...');
+    debugItemClienteTable();
+}, 2000);
+
 // Inicia a aplicação
 initializeApp();
 
@@ -1401,14 +1596,63 @@ document.addEventListener('DOMContentLoaded', setupMobileResponsiveness);
 
 // Helper para mapear objeto do Banco para Objeto Local
 function mapDatabaseItemToLocal(row) {
+    // Processa clientes: tenta JSON primeiro, depois usa IdCliente como fallback
+    let clientIds = [];
+    if (row.IdClientes) {
+        try {
+            clientIds = JSON.parse(row.IdClientes);
+        } catch (e) {
+            // Se não for JSON válido, usa IdCliente como array
+            if (row.IdCliente) {
+                clientIds = [row.IdCliente];
+            }
+        }
+    } else if (row.IdCliente) {
+        clientIds = [row.IdCliente];
+    }
+    
     return {
         id: row.Id || row.id,
         ticket: row.Numero || row.numero || '',
-        name: row.Descricao || row.descricao || row.Nome || row.nome || '',
+        name: row.Descricao || row.descricao || '',
         date: (row.Data || row.data || '').split('T')[0],
         url: row.Url || row.url || '',
         migration: row.Migration || row.migration,
         clientId: row.IdCliente || row.clienteid,
+        clientIds: clientIds, // Array de IDs de clientes
         versionId: row.IdVersao || row.versaoid
     };
+}
+
+// Helper para enriquecer itens com clientes da tabela de relacionamento
+async function enrichItemsWithClients(items) {
+    if (!supabaseClient || !items || items.length === 0) return items;
+    
+    try {
+        const itemIds = items.map(item => item.id);
+        const { itemsMap } = await ClientesAPI.buscarItensComClientes(supabaseClient, itemIds);
+        
+        console.log('Enriching items with clients:', { itemIds, itemsMap });
+        
+        items.forEach(item => {
+            console.log(`Processing item ${item.id}:`, {
+                existingClientIds: item.clientIds,
+                clientId: item.clientId,
+                foundClients: itemsMap[item.id]
+            });
+            
+            if (itemsMap[item.id] && itemsMap[item.id].length > 0) {
+                item.clientIds = itemsMap[item.id];
+                console.log(`Item ${item.id} clientes atualizados:`, item.clientIds);
+            } else if (!item.clientIds || item.clientIds.length === 0) {
+                // Fallback para IdCliente único se não houver relacionamentos
+                item.clientIds = item.clientId ? [item.clientId] : [];
+                console.log(`Item ${item.id} usando fallback clientId:`, item.clientIds);
+            }
+        });
+    } catch (error) {
+        console.error('Erro ao enriquecer itens com clientes:', error);
+    }
+    
+    return items;
 }

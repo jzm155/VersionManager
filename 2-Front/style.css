@@ -140,7 +140,8 @@ body {
 
 .status-pendente {
     background-color: #f39c12;
-    color: white;
+    color: white !important;
+    font-weight: bold;
 }
 
 .status-finalizado {
@@ -151,7 +152,8 @@ body {
 
 .status-cancelado {
     background-color: #c0392b;
-    color: white;
+    color: white !important;
+    font-weight: bold;
 }
 
 /* ==========================================================================
