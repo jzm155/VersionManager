@@ -129,10 +129,21 @@ const navLinks = document.querySelectorAll('.nav-link');
 
 // --- Funções de Renderização ---
 
-// Helper para obter nome do cliente
-function getClientName(clientId) {
-    // Usa '==' para garantir compatibilidade entre string (UUID) e int
-    const client = state.clients.find(c => c.id == clientId);
+// Helper para obter nome do cliente (suporta múltiplos clientes)
+function getClientName(clientIds) {
+    if (!clientIds) return 'Desconhecido';
+    
+    // Se for array (múltiplos clientes)
+    if (Array.isArray(clientIds)) {
+        const names = clientIds.map(id => {
+            const client = state.clients.find(c => c.id == id);
+            return client ? client.name : 'Desconhecido';
+        });
+        return names.join(', ');
+    }
+    
+    // Se for único (legado)
+    const client = state.clients.find(c => c.id == clientIds);
     return client ? client.name : 'Desconhecido';
 }
 
@@ -244,11 +255,17 @@ function updateUserDisplay() {
 
 // Etapa 2: Renderizar Tela de Versões
 async function renderVersions() {
+    console.log('renderVersions called');
     pageTitle.textContent = 'Versões';
     
     toggleLoading(true);
     try {
-        if (supabaseClient) await refreshVersionsState();
+        if (supabaseClient) {
+            await refreshVersionsState();
+            await refreshItemsState(); // Carrega itens para contagem correta
+        }
+        console.log('Versions state:', state.versions);
+        console.log('Items state:', state.items);
     } finally {
         toggleLoading(false);
     }
@@ -262,34 +279,129 @@ async function renderVersions() {
         <button class="btn-primary" id="btn-add-version">Adicionar Versão</button>
     `;
 
+    // Container de filtros
+    const filtersContainer = document.createElement('div');
+    filtersContainer.className = 'filters-container';
+    
+    filtersContainer.innerHTML = `
+        <div class="filters-row">
+            <div class="filter-group">
+                <label for="filter-search">Buscar por nome:</label>
+                <input type="text" id="filter-search" placeholder="Digite o nome da versão...">
+            </div>
+            <div class="filter-group">
+                <label for="filter-status">Status:</label>
+                <select id="filter-status">
+                    <option value="">Todos</option>
+                    <option value="1">Finalizado</option>
+                    <option value="2">Pendente</option>
+                    <option value="3">Cancelado</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-date">Data de lançamento:</label>
+                <input type="date" id="filter-date">
+            </div>
+            <div class="filter-group">
+                <button class="btn-secondary" id="btn-clear-filters">Limpar Filtros</button>
+            </div>
+        </div>
+    `;
+
     // Grid de versões
     const grid = document.createElement('div');
     grid.className = 'versions-grid';
 
-    state.versions.forEach(version => {
-        const card = document.createElement('div');
-        card.className = 'version-card';
-        // Evento de clique para ir para detalhes
-        card.onclick = () => renderVersionDetail(version.id);
-        
-        const statusInfo = getStatusInfo(version.status);
+    // Função para filtrar e renderizar versões
+    function renderFilteredVersions() {
+        const searchTerm = document.getElementById('filter-search').value.toLowerCase();
+        const statusFilter = document.getElementById('filter-status').value;
+        const dateFilter = document.getElementById('filter-date').value;
 
-        card.innerHTML = `
-            <h3>${version.name}</h3>
-            <span style="display:block; margin-bottom: 10px;">Lançamento: ${formatDateToBR(version.date)}</span>
-            <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
-        `;
-        grid.appendChild(card);
-    });
+        // Limpa grid
+        grid.innerHTML = '';
+
+        // Filtra versões
+        const filteredVersions = state.versions.filter(version => {
+            // Filtro por nome
+            if (searchTerm && !version.name.toLowerCase().includes(searchTerm)) {
+                return false;
+            }
+
+            // Filtro por status
+            if (statusFilter && version.status != parseInt(statusFilter)) {
+                return false;
+            }
+
+            // Filtro por data
+            if (dateFilter && version.date !== dateFilter) {
+                return false;
+            }
+
+            return true;
+        });
+
+        // Renderiza versões filtradas
+        // Calcula numeração decrescente para versões finalizadas (mais recente = #1)
+        const completedVersions = state.versions.filter(v => v.status === 1);
+        const versionNumbers = {};
+        completedVersions.forEach((version, index) => {
+            versionNumbers[version.id] = completedVersions.length - index;
+        });
+
+        filteredVersions.forEach(version => {
+            const card = document.createElement('div');
+            card.className = 'version-card';
+            // Evento de clique para ir para detalhes
+            card.onclick = () => renderVersionDetail(version.id);
+            
+            const statusInfo = getStatusInfo(version.status);
+            const versionNumber = version.status === 1 ? versionNumbers[version.id] : null;
+
+            // Calcula quantidade de itens desta versão
+            const versionItems = state.items.filter(item => item.versionId === version.id);
+            const itemCount = versionItems.length;
+
+            card.innerHTML = `
+                <h3>${versionNumber ? `<span style="color: #28a745; font-weight: bold;">#${versionNumber}</span> ` : ''}${version.name}</h3>
+                <span style="display:block; margin-bottom: 5px;">Lançamento: ${formatDateToBR(version.date)}</span>
+                <span style="display:block; margin-bottom: 10px; color: #666; font-size: 0.9rem;">📋 ${itemCount} item(s)</span>
+                <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
+            `;
+            grid.appendChild(card);
+        });
+
+        // Mensagem se não houver resultados
+        if (filteredVersions.length === 0) {
+            grid.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Nenhuma versão encontrada com os filtros aplicados.</div>';
+        }
+    }
 
     // Limpa e popula a área de conteúdo
     contentArea.innerHTML = '';
     contentArea.appendChild(headerContainer);
+    contentArea.appendChild(filtersContainer);
     contentArea.appendChild(grid);
+
+    // Adiciona eventos dos filtros (APÓS adicionar ao DOM)
+    document.getElementById('filter-search').addEventListener('input', renderFilteredVersions);
+    document.getElementById('filter-status').addEventListener('change', renderFilteredVersions);
+    document.getElementById('filter-date').addEventListener('change', renderFilteredVersions);
+    
+    document.getElementById('btn-clear-filters').addEventListener('click', () => {
+        document.getElementById('filter-search').value = '';
+        document.getElementById('filter-status').value = '';
+        document.getElementById('filter-date').value = '';
+        renderFilteredVersions();
+    });
+
+    // Renderiza inicialmente
+    renderFilteredVersions();
 
     // Ação do botão
     document.getElementById('btn-add-version').onclick = () => navigateTo('version-form');
 
+    console.log('renderVersions completed successfully');
 }
 
 // Etapa 3: Detalhes da Versão
@@ -311,6 +423,10 @@ async function renderVersionDetail(versionId) {
 
             if (data) {
                 const mappedItems = data.map(mapDatabaseItemToLocal);
+                
+                // Enriquece itens com clientes da tabela de relacionamento
+                await enrichItemsWithClients(mappedItems);
+                
                 // Atualiza o estado local: remove itens antigos desta versão e insere os atualizados
                 state.items = state.items.filter(i => i.versionId !== versionId).concat(mappedItems);
             }
@@ -332,7 +448,9 @@ async function renderVersionDetail(versionId) {
     const statusInfo = getStatusInfo(version.status);
     const isPending = version.status === 2;
     const canReport = version.status !== 3;
+    // Permite editar nome da versão mesmo que finalizada, mas outras ações apenas se pendente
     const disabledAttr = !isPending ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : '';
+    const editDisabledAttr = ''; // Sempre permite editar nome
 
     container.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -340,7 +458,7 @@ async function renderVersionDetail(versionId) {
                 <button class="btn-secondary" id="btn-back" style="margin-right: 10px;">&larr; Voltar</button>
                 <span style="font-size: 1.2rem; font-weight: bold;">${version.name}</span>
                 <span style="color: #666; margin-left: 10px;">${version.date}</span>
-                <button class="btn-primary btn-sm" id="btn-edit-version-modal" title="Editar Detalhes" ${disabledAttr}>✏️ Editar</button>
+                <button class="btn-primary btn-sm" id="btn-edit-version-modal" title="Editar Nome da Versão" ${editDisabledAttr}>✏️ Editar Nome</button>
                 <span class="status-badge ${statusInfo.className}" style="margin-top:0;">${statusInfo.label}</span>
             </div>
             <div style="display: flex; gap: 10px;">
@@ -369,7 +487,7 @@ async function renderVersionDetail(versionId) {
                             <td>${item.name}</td>
                             <td>${formatDateToBR(item.date)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
-                            <td>${getClientName(item.clientId)}</td>
+                            <td>${getClientName(item.clientIds || item.clientId)}</td>
                             <td style="text-align: right;">
                                 <button class="btn-primary btn-sm btn-edit-item" data-id="${item.id}" ${disabledAttr}>Editar</button>
                                 <button class="btn-secondary btn-sm btn-del-item" data-id="${item.id}" style="background-color: #e74c3c;" ${disabledAttr}>Excluir</button>
@@ -462,19 +580,28 @@ function openEditVersionModal(version) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     
+    // Verifica se versão está finalizada para limitar edição
+    const isFinalized = version.status === 1;
+    
     // Estrutura do Modal (reusando classes de form-card)
     overlay.innerHTML = `
         <div class="modal-content">
             <form id="modal-edit-form" class="form-card" style="margin: 0; max-width: 100%; box-shadow: none;">
-                <h2>Editar Versão</h2>
+                <h2>${isFinalized ? 'Editar Nome da Versão' : 'Editar Versão'}</h2>
                 <div class="form-group">
                     <label for="modal-version-name">Número da Versão</label>
                     <input type="text" id="modal-version-name" value="${version.name}" required>
                 </div>
+                ${!isFinalized ? `
                 <div class="form-group">
                     <label for="modal-version-date">Data de Lançamento</label>
                     <input type="date" id="modal-version-date" value="${version.date}">
                 </div>
+                ` : `
+                <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #27ae60;">
+                    <small style="color: #666;">⚠️ Versão finalizada. Apenas o nome pode ser editado.</small>
+                </div>
+                `}
                 <div class="form-actions">
                     <button type="button" class="btn-secondary" id="btn-modal-cancel">Cancelar</button>
                     <button type="submit" class="btn-primary">Salvar Alterações</button>
@@ -493,19 +620,36 @@ function openEditVersionModal(version) {
     document.getElementById('modal-edit-form').onsubmit = async (e) => {
         e.preventDefault();
         const novoNome = document.getElementById('modal-version-name').value;
-        const novaData = document.getElementById('modal-version-date').value;
+        const novaData = document.getElementById('modal-version-date')?.value;
+        const isFinalized = version.status === 1;
+
+        // Validação: Data de lançamento não pode ser anterior à data atual (apenas se não for finalizada)
+        if (!isFinalized && novaData) {
+            const releaseDate = new Date(novaData);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); // Zera a hora para comparar apenas a data
+            
+            if (releaseDate < today) {
+                showModal('Erro', 'A Data de Lançamento não pode ser anterior à data atual.');
+                return;
+            }
+        }
 
         toggleLoading(true);
         try {
             if (supabaseClient) {
+                // Se finalizada, atualiza apenas o nome
+                const updateData = isFinalized ? { Titulo: novoNome } : { Titulo: novoNome, DataPublicacao: novaData };
                 const { error } = await supabaseClient
                     .from('Versao')
-                    .update({ Titulo: novoNome, DataPublicacao: novaData })
+                    .update(updateData)
                     .eq('Id', version.id);
                 if (error) throw error;
             }
             version.name = novoNome;
-            version.date = novaData;
+            if (!isFinalized && novaData) {
+                version.date = novaData;
+            }
             close();
             renderVersionDetail(version.id); 
         } catch (err) {
@@ -517,14 +661,43 @@ function openEditVersionModal(version) {
 }
 
 // Função para abrir o Modal de Item (Criar/Editar)
-function openItemModal(item = null, versionId = null, onSuccess = null) {
+async function openItemModal(item = null, versionId = null, onSuccess = null) {
     const isEdit = item !== null;
     
-    // Gera opções de clientes
-    const clientOptions = state.clients
+    // Se for edição, busca os clientes do banco
+    let itemClientIds = [];
+    if (isEdit && supabaseClient && item) {
+        console.log('Editando item:', item);
+        console.log('Item.clientIds:', item.clientIds);
+        console.log('Item.clientId:', item.clientId);
+        
+        const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.id);
+        console.log('Resultado da busca de clientes:', result);
+        
+        if (result.success) {
+            itemClientIds = result.clienteIds;
+            console.log('Clientes encontrados no banco:', itemClientIds);
+        } else {
+            console.error('Erro ao buscar clientes:', result.error);
+        }
+    } else if (isEdit && item && item.clientIds) {
+        itemClientIds = item.clientIds;
+        console.log('Usando clientIds do item local:', itemClientIds);
+    }
+    
+    // Gera checkboxes para clientes
+    const clientCheckboxes = state.clients
         .filter(c => c.active)
-        .map(c => `<option value="${c.id}" ${item && item.clientId === c.id ? 'selected' : ''}>${c.name}</option>`)
-        .join('');
+        .map(c => {
+            const isChecked = itemClientIds.includes(c.id) ? 'checked' : '';
+            console.log(`Cliente ${c.name} (ID: ${c.id}): ${isChecked ? 'marcado' : 'desmarcado'}`);
+            return `
+                <div class="checkbox-label" style="margin-bottom: 8px;">
+                    <input type="checkbox" id="client-${c.id}" name="clients" value="${c.id}" ${isChecked}>
+                    <label for="client-${c.id}" style="font-weight: normal;">${c.name}</label>
+                </div>
+            `;
+        }).join('');
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -550,10 +723,27 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                     <input type="text" id="modal-item-url" value="${item ? item.url : ''}">
                 </div>
                 <div class="form-group">
-                    <label for="modal-item-client">Cliente</label>
-                    <select id="modal-item-client" required>
-                        ${clientOptions}
-                    </select>
+                    <label>Clientes (selecione um ou mais)</label>
+                    <div style="max-height: 150px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                        ${clientCheckboxes}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Tipos (selecione um ou mais)</label>
+                    <div style="max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                        <div class="checkbox-label" style="margin-bottom: 8px;">
+                            <input type="checkbox" id="item-type-back" name="types" value="back">
+                            <label for="item-type-back" style="font-weight: normal;">Backend</label>
+                        </div>
+                        <div class="checkbox-label" style="margin-bottom: 8px;">
+                            <input type="checkbox" id="item-type-front" name="types" value="front">
+                            <label for="item-type-front" style="font-weight: normal;">Frontend</label>
+                        </div>
+                        <div class="checkbox-label" style="margin-bottom: 8px;">
+                            <input type="checkbox" id="item-type-banco" name="types" value="banco">
+                            <label for="item-type-banco" style="font-weight: normal;">Banco de Dados</label>
+                        </div>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="checkbox-label">
@@ -577,15 +767,36 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
     document.getElementById('modal-item-form').onsubmit = async (e) => {
         e.preventDefault();
         
+        // Coleta múltiplos clientes selecionados
+        const selectedClients = Array.from(document.querySelectorAll('input[name="clients"]:checked'))
+            .map(checkbox => parseInt(checkbox.value));
+        
+        // Coleta múltiplos tipos selecionados
+        const selectedTypes = Array.from(document.querySelectorAll('input[name="types"]:checked'))
+            .map(checkbox => checkbox.value);
+        
+        if (selectedClients.length === 0) {
+            showModal('Erro', 'Selecione pelo menos um cliente.');
+            return;
+        }
+        
         const payload = {
             Numero: document.getElementById('modal-item-ticket').value,
             Descricao: document.getElementById('modal-item-name').value,
             Data: document.getElementById('modal-item-date').value,
             Url: document.getElementById('modal-item-url').value,
             Migration: document.getElementById('modal-item-migration').checked,
-            IdCliente: parseInt(document.getElementById('modal-item-client').value),
+            IdCliente: selectedClients.length > 0 ? selectedClients[0] : null, // Usa apenas o primeiro por enquanto
             IdVersao: versionId // VINCULA AUTOMATICAMENTE SE FOR PASSADO
         };
+        
+        // Adiciona Tipos apenas se a coluna existir (para evitar erro)
+        if (selectedTypes.length > 0) {
+            payload.Tipos = JSON.stringify(selectedTypes);
+        }
+        
+        // Armazena múltiplos clientes no localStorage para exibição
+        const itemClientIds = selectedClients;
         
         toggleLoading(true);
         try {
@@ -595,7 +806,15 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                 
                 // Adiciona ao estado local para aparecer na lista imediatamente
                 if (data && data.length > 0) {
-                    state.items.push(mapDatabaseItemToLocal(data[0]));
+                    const newItem = mapDatabaseItemToLocal(data[0]);
+                    const itemId = data[0].Id || data[0].id;
+                    
+                    // Salva múltiplos clientes na tabela de relacionamento
+                    await ClientesAPI.salvarClientesItem(supabaseClient, itemId, itemClientIds);
+                    
+                    // Sobrescreve com os clientes selecionados localmente
+                    newItem.clientIds = itemClientIds;
+                    state.items.push(newItem);
                 }
             } else {
                 // Fallback Mock
@@ -608,6 +827,7 @@ function openItemModal(item = null, versionId = null, onSuccess = null) {
                     url: payload.Url,
                     migration: payload.Migration,
                     clientId: payload.IdCliente,
+                    clientIds: selectedClients,
                     versionId: payload.IdVersao
                 });
             }
@@ -637,7 +857,7 @@ function openLinkExistingItemsModal(versionId, onSuccess) {
     const itemsHtml = pendingItems.map(item => `
         <label class="checkbox-label" style="padding: 8px; border-radius: 4px; transition: background-color 0.2s; cursor: pointer; display: block; border-bottom: 1px solid #f0f0f0;">
             <input type="checkbox" class="item-to-link" value="${item.id}" style="margin-right: 15px;">
-            <span><strong>${item.ticket || 'S/N'}:</strong> ${item.name} <em style="color: #7f8c8d;">(${getClientName(item.clientId)})</em></span>
+            <span><strong>${item.ticket || 'S/N'}:</strong> ${item.name} <em style="color: #7f8c8d;">(${getClientName(item.clientIds || item.clientId)})</em></span>
         </label>
     `).join('');
 
@@ -769,15 +989,614 @@ function renderLogin() {
     };
 }
 
-// Nova funcionalidade: Gerar Relato
+// Função auxiliar para buscar métricas do backend
+async function fetchMetricsData() {
+    console.log('=== DEBUG fetchMetricsData ===');
+    
+    if (!supabaseClient) {
+        console.log('SupabaseClient não disponível');
+        return null;
+    }
+    
+    try {
+        // Busca todas as versões com seus itens
+        console.log('Buscando versões...');
+        const { data: versions, error: versionError } = await supabaseClient
+            .from('Versao')
+            .select('Id, Titulo, DataPublicacao, Status')
+            .order('DataPublicacao', { ascending: false });
+        
+        if (versionError) throw versionError;
+        console.log('Versões encontradas:', versions?.length || 0);
+        
+        // Busca todos os itens
+        console.log('Buscando itens...');
+        const { data: items, error: itemError } = await supabaseClient
+            .from('Item')
+            .select('Id, IdVersao, Data, Descricao, Migration, IdCliente');
+        
+        if (itemError) throw itemError;
+        console.log('Itens encontrados:', items?.length || 0);
+        
+        // Enriquece itens com clientes usando a API existente
+        if (items && items.length > 0) {
+            console.log('Enriquecendo itens com clientes...');
+            try {
+                const itemIds = items.map(item => item.Id || item.id);
+                const { itemsMap } = await ClientesAPI.buscarItensComClientes(supabaseClient, itemIds);
+                
+                // Adiciona os clientes encontrados a cada item
+                items.forEach(item => {
+                    const itemId = item.Id || item.id;
+                    if (itemsMap[itemId] && itemsMap[itemId].length > 0) {
+                        item.clientIds = itemsMap[itemId];
+                        console.log(`Item ${itemId} tem ${itemsMap[itemId].length} clientes:`, itemsMap[itemId]);
+                    }
+                });
+            } catch (error) {
+                console.warn('Erro ao enriquecer itens com clientes:', error);
+            }
+        }
+        
+        // Busca todos os clientes
+        console.log('Buscando clientes...');
+        const { data: clients, error: clientError } = await supabaseClient
+            .from('Cliente')
+            .select('Id, Nome');
+        
+        if (clientError) throw clientError;
+        console.log('Clientes encontrados:', clients?.length || 0);
+        
+        // Busca relacionamentos ItemCliente
+        console.log('Buscando relacionamentos ItemCliente...');
+        const { data: itemClients, error: itemClientError } = await supabaseClient
+            .from('ItemCliente')
+            .select('IdItem, IdCliente');
+        
+        // Se ItemCliente não existir ou der erro, usa fallback
+        let itemClientData = itemClients;
+        if (itemClientError) {
+            console.warn('Tabela ItemCliente não encontrada, usando IdCliente dos itens. Erro:', itemClientError);
+            itemClientData = null;
+        } else {
+            console.log('Relacionamentos ItemCliente encontrados:', itemClients?.length || 0);
+        }
+        
+        // Mostra amostra dos dados para debug
+        if (items && items.length > 0) {
+            console.log('Amostra de itens:', items.slice(0, 3).map(item => ({
+                id: item.Id || item.id,
+                descricao: item.Descricao || item.descricao,
+                idCliente: item.IdCliente || item.idcliente,
+                migration: item.Migration || item.migration
+            })));
+        }
+        
+        if (clients && clients.length > 0) {
+            console.log('Amostra de clientes:', clients.slice(0, 3));
+        }
+        
+        console.log('=== FIM DEBUG fetchMetricsData ===');
+        
+        return { versions, items, clients, itemClients: itemClientData };
+    } catch (error) {
+        console.error('Erro ao buscar métricas:', error);
+        return null;
+    }
+}
+
+// Função para processar métricas por período
+function processPeriodMetrics(versions, items) {
+    const monthsMap = new Map();
+    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    
+    versions.forEach(version => {
+        if (!version.DataPublicacao && !version.datapublicacao) return;
+        
+        const date = new Date(version.DataPublicacao || version.datapublicacao);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = `${monthNames[date.getMonth()]}/${date.getFullYear()}`;
+        
+        if (!monthsMap.has(monthKey)) {
+            monthsMap.set(monthKey, {
+                monthName,
+                totalVersions: 0,
+                completedVersions: 0,
+                pendingVersions: 0,
+                canceledVersions: 0,
+                totalItems: 0
+            });
+        }
+        
+        const monthData = monthsMap.get(monthKey);
+        monthData.totalVersions++;
+        
+        const status = version.Status || version.status;
+        if (status === 1) monthData.completedVersions++;
+        else if (status === 2) monthData.pendingVersions++;
+        else if (status === 3) monthData.canceledVersions++;
+        
+        // Conta itens desta versão
+        const versionId = version.Id || version.id;
+        const versionItems = items.filter(item => (item.IdVersao || item.idversao) === versionId);
+        monthData.totalItems += versionItems.length;
+    });
+    
+    // Converte para array e ordena por data (mais recente primeiro)
+    return Array.from(monthsMap.entries())
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .map(([key, data]) => data);
+}
+
+// Função para processar métricas de itens por clientes
+function processClientMetrics(items, clients, itemClients) {
+    console.log('=== DEBUG processClientMetrics ===');
+    console.log('Items recebidos:', items?.length || 0);
+    console.log('Clients recebidos:', clients?.length || 0);
+    console.log('ItemClients recebidos:', itemClients?.length || 0);
+    
+    const clientMetrics = new Map();
+    
+    // Inicializa métricas para todos os clientes
+    clients.forEach(client => {
+        const clientId = client.Id || client.id;
+        const clientName = client.Nome || client.nome || client.Name || client.name;
+        
+        console.log(`Cliente encontrado: ${clientName} (ID: ${clientId})`);
+        
+        clientMetrics.set(clientId, {
+            clientName,
+            totalItems: 0,
+            migrationItems: 0,
+            regularItems: 0,
+            items: [] // Array para guardar detalhes dos itens
+        });
+    });
+    
+    console.log('Map de clientes inicializado:', clientMetrics.size);
+    
+    // Processa cada item
+    items.forEach((item, index) => {
+        const itemId = item.Id || item.id;
+        
+        // Validação melhor dos dados do item
+        const itemDescricao = item.Descricao || item.descricao || '';
+        const itemData = item.Data || item.data || '';
+        const isMigration = !!(item.Migration || item.migration);
+        
+        // Skip itens sem descrição válida ou que parecem ser nomes de clientes
+        if (!itemDescricao || itemDescricao.trim() === '') {
+            console.log(`Item ${itemId} sem descrição válida, pulando...`);
+            return;
+        }
+        
+        // Verifica se a descrição corresponde a um nome de cliente existente
+        const isClientName = clients.some(client => {
+            const clientName = (client.Nome || client.nome || client.Name || client.name || '').toLowerCase();
+            return clientName === itemDescricao.toLowerCase();
+        });
+        
+        if (isClientName) {
+            console.log(`Item ${itemId} com nome de cliente: "${itemDescricao}", pulando...`);
+            return;
+        }
+        
+        // Verifica se a descrição é muito curta (possivelmente só nome de cliente)
+        if (itemDescricao.length <= 20 && !isMigration && !itemData) {
+            console.log(`Item ${itemId} com descrição suspeita (possível nome de cliente): "${itemDescricao}", pulando...`);
+            return;
+        }
+        
+        console.log(`Processando item ${index + 1}:`, {
+            id: itemId,
+            descricao: itemDescricao,
+            idCliente: item.IdCliente || item.idcliente,
+            migration: isMigration,
+            data: itemData
+        });
+        
+        // Determina clientes do item
+        let itemClientIds = [];
+        
+        // Primeiro tenta usar os dados enriquecidos da API
+        if (item.clientIds && item.clientIds.length > 0) {
+            itemClientIds = item.clientIds;
+            console.log(`Usando clientIds enriquecidos do item:`, itemClientIds);
+        } else if (itemClients && itemClients.length > 0) {
+            // Usa tabela de relacionamento
+            const relationships = itemClients.filter(ic => (ic.IdItem || ic.iditem) === itemId);
+            console.log(`Relacionamentos encontrados para item ${itemId}:`, relationships.length);
+            itemClientIds = relationships.map(r => r.IdCliente || r.idcliente);
+        } else if (item.IdCliente || item.idcliente) {
+            // Fallback: usa IdCliente do item (se existir)
+            itemClientIds = [item.IdCliente || item.idcliente];
+            console.log(`Usando IdCliente do item: ${itemClientIds[0]}`);
+        } else {
+            console.log(`Item ${itemId} não tem cliente associado`);
+        }
+        
+        // Se não encontrou clientes, pula este item
+        if (itemClientIds.length === 0) {
+            console.log(`Item ${itemId} sem clientes, pulando...`);
+            return;
+        }
+        
+        console.log(`Item ${itemId} clientes:`, itemClientIds);
+        
+        // Adiciona o item a cada cliente associado
+        itemClientIds.forEach(clientId => {
+            const clientMetric = clientMetrics.get(clientId);
+            if (clientMetric) {
+                clientMetric.totalItems++;
+                
+                if (isMigration) {
+                    clientMetric.migrationItems++;
+                } else {
+                    clientMetric.regularItems++;
+                }
+                
+                // Adiciona detalhes do item com validação
+                clientMetric.items.push({
+                    id: itemId,
+                    description: itemDescricao,
+                    migration: isMigration,
+                    date: itemData
+                });
+                
+                console.log(`Item ${itemId} adicionado ao cliente ${clientId} - Total: ${clientMetric.totalItems}`);
+            } else {
+                console.log(`Cliente ${clientId} não encontrado no mapa`);
+            }
+        });
+    });
+    
+    // Converte para array e ordena por total de itens (decrescente)
+    const result = Array.from(clientMetrics.entries())
+        .map(([clientId, data]) => ({ clientId, ...data }))
+        .filter(client => client.totalItems > 0) // Apenas clientes com itens
+        .sort((a, b) => b.totalItems - a.totalItems);
+    
+    console.log('Resultado final:', result);
+    console.log('=== FIM DEBUG processClientMetrics ===');
+    
+    return result;
+}
+
+// Função para processar tendências
+function processTrends(versions) {
+    const monthsMap = new Map();
+    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    
+    versions.forEach(version => {
+        if (!version.DataPublicacao && !version.datapublicacao) return;
+        
+        const date = new Date(version.DataPublicacao || version.datapublicacao);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = `${monthNames[date.getMonth()]}/${String(date.getFullYear()).slice(2)}`;
+        
+        if (!monthsMap.has(monthKey)) {
+            monthsMap.set(monthKey, {
+                monthName,
+                completed: 0,
+                pending: 0,
+                canceled: 0
+            });
+        }
+        
+        const monthData = monthsMap.get(monthKey);
+        const status = version.Status || version.status;
+        
+        if (status === 1) monthData.completed++;
+        else if (status === 2) monthData.pending++;
+        else if (status === 3) monthData.canceled++;
+    });
+    
+    // Retorna últimos 6 meses ordenados
+    return Array.from(monthsMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .slice(-6)
+        .map(([key, data]) => data);
+}
+
+// Card de Métricas por Período
+function createPeriodMetricsCard(periodMetrics) {
+    const card = document.createElement('div');
+    card.className = 'metrics-card';
+    
+    card.innerHTML = `
+        <h2>📅 Versões por Período</h2>
+        <div class="period-metrics-grid">
+            ${periodMetrics.slice(0, 6).map(period => `
+                <div class="period-card">
+                    <div class="period-header">
+                        <h3>${period.monthName}</h3>
+                    </div>
+                    <div class="period-stats">
+                        <div class="stat-row">
+                            <span class="stat-label">Versões:</span>
+                            <span class="stat-value">${period.totalVersions}</span>
+                        </div>
+                        <div class="stat-breakdown">
+                            <div class="stat-item success">
+                                <span>✅ ${period.completedVersions}</span>
+                            </div>
+                            <div class="stat-item warning">
+                                <span>⏳ ${period.pendingVersions}</span>
+                            </div>
+                            <div class="stat-item danger">
+                                <span>❌ ${period.canceledVersions}</span>
+                            </div>
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-label">Itens:</span>
+                            <span class="stat-value">${period.totalItems}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    return card;
+}
+
+// Card de Métricas por Cliente
+function createClientMetricsCard(clientMetrics) {
+    const card = document.createElement('div');
+    card.className = 'metrics-card';
+    
+    card.innerHTML = `
+        <h2>👥 Itens por Cliente</h2>
+        <div class="client-metrics-grid">
+            ${clientMetrics.map(client => `
+                <div class="client-card">
+                    <div class="client-header">
+                        <h3>${client.clientName}</h3>
+                        <span class="total-badge">${client.totalItems} itens</span>
+                    </div>
+                    <div class="client-stats">
+                        <div class="stat-row">
+                            <span class="stat-label">Total:</span>
+                            <span class="stat-value">${client.totalItems}</span>
+                        </div>
+                        <div class="stat-breakdown">
+                            <div class="stat-item migration">
+                                <span>🔄 ${client.migrationItems}</span>
+                            </div>
+                            <div class="stat-item regular">
+                                <span>📝 ${client.regularItems}</span>
+                            </div>
+                        </div>
+                        <div class="migration-percentage">
+                            <span class="stat-label">Migrations:</span>
+                            <span class="stat-value">${client.totalItems > 0 ? Math.round(client.migrationItems / client.totalItems * 100) : 0}%</span>
+                        </div>
+                    </div>
+                    <div class="client-items-toggle">
+                        <button class="btn-toggle-items" data-client="${client.clientId}">Ver itens ▼</button>
+                    </div>
+                    <div class="client-items-list" id="items-${client.clientId}" style="display: none;">
+                        ${client.items.map(item => `
+                            <div class="item-detail ${item.migration ? 'migration-item' : 'regular-item'}">
+                                <span class="item-icon">${item.migration ? '🔄' : '📝'}</span>
+                                <span class="item-description">${item.description}</span>
+                                <span class="item-date">${formatDateToBR(item.date)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    
+    // Adiciona eventos para expandir/recolher lista de itens
+    card.querySelectorAll('.btn-toggle-items').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const clientId = e.target.dataset.client;
+            const itemsList = document.getElementById(`items-${clientId}`);
+            const isExpanded = itemsList.style.display !== 'none';
+            
+            itemsList.style.display = isExpanded ? 'none' : 'block';
+            e.target.textContent = isExpanded ? 'Ver itens ▼' : 'Ocultar itens ▲';
+        });
+    });
+    
+    return card;
+}
+
+// Card de Trends
+function createTrendsCard(trends) {
+    const card = document.createElement('div');
+    card.className = 'metrics-card';
+    
+    const maxValue = Math.max(...trends.map(t => Math.max(t.completed, t.pending, t.canceled)), 1);
+    
+    card.innerHTML = `
+        <h2>📈 Tendências de Status (Últimos 6 meses)</h2>
+        <div class="trends-chart">
+            <div class="chart-container">
+                ${trends.map(trend => `
+                    <div class="chart-bar-group">
+                        <div class="chart-label">${trend.monthName}</div>
+                        <div class="chart-bars">
+                            <div class="chart-bar success" style="height: ${(trend.completed / maxValue * 100)}%" title="Finalizadas: ${trend.completed}"></div>
+                            <div class="chart-bar warning" style="height: ${(trend.pending / maxValue * 100)}%" title="Pendentes: ${trend.pending}"></div>
+                            <div class="chart-bar danger" style="height: ${(trend.canceled / maxValue * 100)}%" title="Canceladas: ${trend.canceled}"></div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="chart-legend">
+                <div class="legend-item success">✅ Finalizadas</div>
+                <div class="legend-item warning">⏳ Pendentes</div>
+                <div class="legend-item danger">❌ Canceladas</div>
+            </div>
+        </div>
+    `;
+    return card;
+}
+
+// Renderizar Tela de Métricas
+async function renderMetrics() {
+    pageTitle.textContent = 'Métricas';
+    
+    toggleLoading(true);
+    
+    try {
+        const metricsData = await fetchMetricsData();
+        
+        if (!metricsData || !metricsData.versions) {
+            contentArea.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Não foi possível carregar as métricas.</div>';
+            return;
+        }
+        
+        const { versions, items, clients, itemClients } = metricsData;
+        
+        // Extrai anos disponíveis das versões
+        const availableYears = [...new Set(
+            versions
+                .filter(v => v.DataPublicacao || v.datapublicacao)
+                .map(v => new Date(v.DataPublicacao || v.datapublicacao).getFullYear())
+        )].sort((a, b) => b - a); // Mais recente primeiro
+        
+        // Container principal
+        const container = document.createElement('div');
+        container.className = 'metrics-container';
+        
+        // Header
+        const headerContainer = document.createElement('div');
+        headerContainer.className = 'header-container';
+        headerContainer.innerHTML = '<h1>Dashboard de Métricas</h1>';
+        
+        // Container de filtros
+        const filtersContainer = document.createElement('div');
+        filtersContainer.className = 'filters-container';
+        filtersContainer.style.marginBottom = '25px';
+        
+        // Gera opções de anos
+        const yearOptions = ['<option value="">Todos os anos</option>']
+            .concat(availableYears.map(year => 
+                `<option value="${year}">${year}</option>`
+            ));
+        
+        filtersContainer.innerHTML = `
+            <div class="filters-row">
+                <div class="filter-group">
+                    <label for="metrics-filter-year">Ano:</label>
+                    <select id="metrics-filter-year">
+                        ${yearOptions.join('')}
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <button class="btn-secondary" id="btn-clear-metrics-filters">Limpar Filtros</button>
+                </div>
+            </div>
+        `;
+        
+        // Função para filtrar e renderizar métricas
+        function renderFilteredMetrics() {
+            const yearFilter = document.getElementById('metrics-filter-year').value;
+            
+            // Filtra versões por ano
+            const filteredVersions = yearFilter 
+                ? versions.filter(v => {
+                    const date = v.DataPublicacao || v.datapublicacao;
+                    return date && new Date(date).getFullYear() === parseInt(yearFilter);
+                })
+                : versions;
+            
+            // Filtra itens por ano (baseado na data do item)
+            const filteredItems = yearFilter
+                ? items.filter(i => {
+                    const date = i.Data || i.data;
+                    return date && new Date(date).getFullYear() === parseInt(yearFilter);
+                })
+                : items;
+            
+            // Processa os dados filtrados
+            const periodMetrics = processPeriodMetrics(filteredVersions, filteredItems);
+            const trends = processTrends(filteredVersions);
+            const clientMetrics = processClientMetrics(filteredItems, clients, itemClients);
+            
+            // Limpa conteúdo existente (exceto header e filtros)
+            const existingCards = container.querySelectorAll('.metrics-card');
+            existingCards.forEach(card => card.remove());
+            
+            // Adiciona cards de métricas
+            if (periodMetrics.length > 0) {
+                container.appendChild(createPeriodMetricsCard(periodMetrics));
+            }
+            
+            if (clientMetrics.length > 0) {
+                container.appendChild(createClientMetricsCard(clientMetrics));
+            }
+            
+            if (trends.length > 0) {
+                container.appendChild(createTrendsCard(trends));
+            }
+            
+            if (periodMetrics.length === 0 && trends.length === 0 && clientMetrics.length === 0) {
+                const noDataMessage = document.createElement('div');
+                noDataMessage.style.cssText = 'text-align: center; padding: 40px; color: #666;';
+                noDataMessage.textContent = yearFilter 
+                    ? `Nenhuma métrica encontrada para o ano ${yearFilter}.`
+                    : 'Nenhuma métrica disponível. Adicione versões com datas de publicação ou itens vinculados a clientes.';
+                container.appendChild(noDataMessage);
+            }
+            
+            // Atualiza contador de resultados
+            const resultCount = document.getElementById('metrics-result-count');
+            if (resultCount) {
+                const totalItems = periodMetrics.reduce((sum, p) => sum + p.totalItems, 0);
+                const completedVersions = yearFilter 
+                    ? filteredVersions.filter(v => (v.Status || v.status) === 1).length
+                    : versions.filter(v => (v.Status || v.status) === 1).length;
+                
+                resultCount.textContent = yearFilter 
+                    ? `${completedVersions} versão(ões) finalizada(s) e ${totalItems} item(ns) em ${yearFilter}`
+                    : `${completedVersions} versão(ões) finalizada(s) e ${items.length} item(ns) no total`;
+            }
+        }
+        
+        // Limpa e adiciona conteúdo
+        contentArea.innerHTML = '';
+        contentArea.appendChild(headerContainer);
+        contentArea.appendChild(filtersContainer);
+        
+        // Adiciona contador de resultados
+        const resultCount = document.createElement('div');
+        resultCount.id = 'metrics-result-count';
+        resultCount.style.cssText = 'margin: 10px 0; font-weight: 600; color: #666; background-color: #f8f9fa; padding: 8px 12px; border-radius: 4px; border-left: 4px solid #3498db;';
+        const completedVersions = versions.filter(v => (v.Status || v.status) === 1).length;
+        resultCount.textContent = `${completedVersions} versão(ões) finalizada(s) e ${items.length} item(ns) no total`;
+        contentArea.appendChild(resultCount);
+        
+        contentArea.appendChild(container);
+        
+        // Adiciona eventos dos filtros
+        document.getElementById('metrics-filter-year').addEventListener('change', renderFilteredMetrics);
+        
+        document.getElementById('btn-clear-metrics-filters').addEventListener('click', () => {
+            document.getElementById('metrics-filter-year').value = '';
+            renderFilteredMetrics();
+        });
+        
+        // Renderiza inicialmente
+        renderFilteredMetrics();
+        
+    } catch (error) {
+        console.error('Erro ao renderizar métricas:', error);
+        contentArea.innerHTML = '<div style="text-align: center; padding: 40px; color: #e74c3c;">Erro ao carregar métricas.</div>';
+    } finally {
+        toggleLoading(false);
+    }
+}
+
+// Nova funcionalidade: Gerar Relato com múltiplos formatos
 function renderReportView(versionId) {
     const version = state.versions.find(v => v.id === versionId);
     const versionItems = state.items.filter(i => i.versionId === versionId);
     
     pageTitle.textContent = `Relato: ${version.name}`;
-    
-    // Formato solicitado: **{Numero}** Versao - Lancamento {{Data}}
-    const header = `**${version.name}** Versao - Lancamento ${version.date}  @everyone`;
     
     // Agrupa itens por cliente
     const itemsByClient = {};
@@ -793,32 +1612,103 @@ function renderReportView(versionId) {
         itemsByClient[clientName].push(item);
     });
 
-    let itemsList = '';
     const sortedClients = Object.keys(itemsByClient).sort((a, b) => {
         if (a === 'Outros') return 1;
         if (b === 'Outros') return -1;
         return a.localeCompare(b);
     });
 
-    sortedClients.forEach(client => {
-        itemsList += `**${client}**\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
-    });
+    // Gera conteúdo base por cliente
+    const generateItemsContent = (formatItem) => {
+        let content = '';
+        sortedClients.forEach(client => {
+            if (formatItem === 'discord') {
+                content += `**${client}**\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
+            } else if (formatItem === 'whatsapp') {
+                content += `*${client}*\n` + itemsByClient[client].map(item => `• ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
+            } else if (formatItem === 'markdown') {
+                content += `### ${client}\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' *(migrations)*' : ''}`).join('\n') + '\n\n';
+            }
+        });
+        return content.trim();
+    };
 
-    const fullText = `${header}\n\n${itemsList.trim()}`;
+    // Formatos disponíveis
+    const formats = {
+        discord: {
+            name: 'Discord',
+            icon: '💬',
+            header: `**${version.name}** Versao - Lancamento ${version.date}  @everyone`,
+            content: generateItemsContent('discord')
+        },
+        whatsapp: {
+            name: 'WhatsApp',
+            icon: '📱',
+            header: `*${version.name}* Versao - Lancamento ${version.date}`,
+            content: generateItemsContent('whatsapp')
+        },
+        markdown: {
+            name: 'Markdown',
+            icon: '📝',
+            header: `## ${version.name} - Versao\n\n**Lancamento:** ${version.date}`,
+            content: generateItemsContent('markdown')
+        }
+    };
 
+    // Container principal
     const container = document.createElement('div');
     container.innerHTML = `
         <div class="header-container">
             <button class="btn-secondary" id="btn-back-report">&larr; Voltar para Detalhes</button>
         </div>
-        <div class="form-card" style="max-width: 800px; margin-top: 20px;">
-            <h2>Pré-visualização do Relato</h2>
+        <div class="form-card" style="max-width: 900px; margin-top: 20px;">
+            <h2>Gerar Relato - ${version.name}</h2>
+            
+            <!-- Seleção de formato -->
             <div class="form-group">
-                <label for="report-text">Texto Formatado (Markdown)</label>
-                <textarea id="report-text" style="width: 100%; height: 300px; padding: 15px; font-family: monospace; border: 1px solid #ced4da; border-radius: 5px;">${fullText}</textarea>
+                <label>Escolha o formato do relato:</label>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    ${Object.entries(formats).map(([key, format]) => `
+                        <button class="btn-format ${key === 'discord' ? 'btn-primary' : 'btn-secondary'}" 
+                                data-format="${key}" 
+                                style="flex: 1;">
+                            ${format.icon} ${format.name}
+                        </button>
+                    `).join('')}
+                </div>
             </div>
+
+            <!-- Pré-visualização -->
+            <div class="form-group">
+                <label for="report-text">Pré-visualização <span id="format-label" style="color: #666;">(Discord)</span></label>
+                <textarea id="report-text" 
+                          style="width: 100%; height: 350px; padding: 15px; font-family: monospace; border: 1px solid #ced4da; border-radius: 5px; resize: vertical;"
+                          readonly>${formats.discord.header}\n\n${formats.discord.content}</textarea>
+            </div>
+
+            <!-- Ações -->
             <div class="form-actions">
-                <button class="btn-primary" id="btn-copy-report">Copiar Texto</button>
+                <button class="btn-primary" id="btn-copy-report">📋 Copiar Texto</button>
+                <button class="btn-secondary" id="btn-download-report">💾 Baixar como Arquivo</button>
+                <button class="btn-secondary" id="btn-download-pdf" style="background-color: #dc3545;">📄 Baixar PDF</button>
+                <button class="btn-secondary" id="btn-download-pdf-client" style="background-color: #28a745;">👥 PDF por Cliente</button>
+                <button class="btn-secondary" id="btn-download-pdf-client" style="background-color: #28a745;">👥 PDF por Cliente</button>
+            </div>
+
+            <!-- Informações -->
+            <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 5px; border-left: 4px solid #3498db;">
+                <h4 style="margin: 0 0 10px 0; color: #495057;">📋 Formatos e Opções de Download:</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.9rem;">
+                    <div><strong>💬 Discord:</strong> Formato com **negrito** e @everyone</div>
+                    <div><strong>📱 WhatsApp:</strong> Formato com *itálico* e bullets simples</div>
+                    <div><strong>📝 Markdown:</strong> Formato com ## cabeçalhos e ### subseções</div>
+                    <div><strong>📄 PDF:</strong> Documento formatado para impressão/envio</div>
+                    <div><strong>👥 PDF por Cliente:</strong> PDFs individuais para cada cliente</div>
+                    <div><strong>👥 PDF por Cliente:</strong> PDFs individuais para cada cliente</div>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85rem; color: #6c757d;">
+                    <strong>💡 Dicas:</strong> PDF único para documentação completa. PDF por cliente ideal para envios individuais e personalizados.
+                </div>
             </div>
         </div>
     `;
@@ -826,13 +1716,412 @@ function renderReportView(versionId) {
     contentArea.innerHTML = '';
     contentArea.appendChild(container);
 
+    // Eventos
     document.getElementById('btn-back-report').onclick = () => renderVersionDetail(versionId);
+
+    // Mudança de formato
+    document.querySelectorAll('.btn-format').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const formatKey = e.target.dataset.format;
+            const format = formats[formatKey];
+            
+            // Atualiza botões
+            document.querySelectorAll('.btn-format').forEach(b => {
+                b.classList.remove('btn-primary');
+                b.classList.add('btn-secondary');
+            });
+            e.target.classList.remove('btn-secondary');
+            e.target.classList.add('btn-primary');
+            
+            // Atualiza label e conteúdo
+            document.getElementById('format-label').textContent = `(${format.name})`;
+            document.getElementById('report-text').value = `${format.header}\n\n${format.content}`;
+        });
+    });
+
+    // Copiar texto
     document.getElementById('btn-copy-report').onclick = () => {
         const textarea = document.getElementById('report-text');
         textarea.select();
         navigator.clipboard.writeText(textarea.value)
             .then(() => showModal('Sucesso', 'Relato copiado para a área de transferência!'))
             .catch(() => showModal('Erro', 'Erro ao copiar. Por favor, tente manualmente.'));
+    };
+
+    // Baixar como arquivo
+    document.getElementById('btn-download-report').onclick = () => {
+        const activeFormat = document.querySelector('.btn-format.btn-primary').dataset.format;
+        const format = formats[activeFormat];
+        const content = `${format.header}\n\n${format.content}`;
+        
+        // Cria blob e download
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}-${activeFormat}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        showModal('Sucesso', 'Arquivo baixado com sucesso!');
+    };
+
+    // Baixar como PDF
+    document.getElementById('btn-download-pdf').onclick = () => {
+        try {
+            // Verifica se jsPDF está disponível
+            if (typeof window.jspdf === 'undefined') {
+                showModal('Erro', 'Biblioteca PDF não carregada. Recarregue a página e tente novamente.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            // Configurações do documento
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const margin = 20;
+            const lineHeight = 7;
+            let yPosition = margin;
+            
+            // Adiciona título principal
+            doc.setFontSize(20);
+            doc.setFont(undefined, 'bold');
+            doc.text(`Relato: ${version.name}`, margin, yPosition);
+            yPosition += 15;
+            
+            // Adiciona informações da versão
+            doc.setFontSize(12);
+            doc.setFont(undefined, 'normal');
+            doc.text(`Versão: ${version.name}`, margin, yPosition);
+            yPosition += lineHeight;
+            doc.text(`Lançamento: ${version.date}`, margin, yPosition);
+            doc.text(`Total de itens: ${versionItems.length}`, margin, yPosition + lineHeight);
+            yPosition += lineHeight * 3;
+            
+            // Adiciona linha separadora
+            doc.setDrawColor(200, 200, 200);
+            doc.line(margin, yPosition, pageWidth - margin, yPosition);
+            yPosition += 10;
+            
+            // Adiciona itens por cliente
+            doc.setFontSize(14);
+            doc.setFont(undefined, 'bold');
+            doc.text('Itens por Cliente:', margin, yPosition);
+            yPosition += 12;
+            
+            sortedClients.forEach((client, index) => {
+                // Verifica se precisa de nova página
+                if (yPosition > pageHeight - 40) {
+                    doc.addPage();
+                    yPosition = margin;
+                }
+                
+                // Nome do cliente
+                doc.setFontSize(12);
+                doc.setFont(undefined, 'bold');
+                doc.text(client, margin, yPosition);
+                yPosition += lineHeight;
+                
+                // Itens do cliente
+                doc.setFont(undefined, 'normal');
+                itemsByClient[client].forEach(item => {
+                    if (yPosition > pageHeight - 25) {
+                        doc.addPage();
+                        yPosition = margin;
+                    }
+                    
+                    const itemText = `• ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
+                    
+                    lines.forEach(line => {
+                        doc.text(line, margin + 5, yPosition);
+                        yPosition += lineHeight;
+                    });
+                });
+                
+                yPosition += 5; // Espaço entre clientes
+            });
+            
+            // Adiciona rodapé
+            const totalPages = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= totalPages; i++) {
+                doc.setPage(i);
+                doc.setFontSize(8);
+                doc.setFont(undefined, 'italic');
+                doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin - 20, pageHeight - 10);
+                doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`, margin, pageHeight - 10);
+            }
+            
+            // Salva o PDF
+            const fileName = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+            doc.save(fileName);
+            
+            showModal('Sucesso', 'PDF gerado e baixado com sucesso!');
+            
+        } catch (error) {
+            console.error('Erro ao gerar PDF:', error);
+            showModal('Erro', 'Não foi possível gerar o PDF. Tente novamente.');
+        }
+    };
+
+    // Gerar PDF por cliente
+    document.getElementById('btn-download-pdf-client').onclick = () => {
+        try {
+            // Verifica se jsPDF está disponível
+            if (typeof window.jspdf === 'undefined') {
+                showModal('Erro', 'Biblioteca PDF não carregada. Recarregue a página e tente novamente.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            
+            // Gera PDF para cada cliente
+            sortedClients.forEach((client, index) => {
+                const clientItems = itemsByClient[client];
+                
+                // Cria novo documento para cada cliente
+                const doc = new jsPDF();
+                
+                // Configurações do documento
+                const pageWidth = doc.internal.pageSize.getWidth();
+                const pageHeight = doc.internal.pageSize.getHeight();
+                const margin = 20;
+                const lineHeight = 7;
+                let yPosition = margin;
+                
+                // Adiciona cabeçalho personalizado
+                doc.setFontSize(18);
+                doc.setFont(undefined, 'bold');
+                doc.text(`Relato: ${version.name}`, margin, yPosition);
+                yPosition += 12;
+                
+                doc.setFontSize(14);
+                doc.setFont(undefined, 'bold');
+                doc.text(`Cliente: ${client}`, margin, yPosition);
+                yPosition += 10;
+                
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'normal');
+                doc.text(`Versão: ${version.name}`, margin, yPosition);
+                yPosition += lineHeight;
+                doc.text(`Lançamento: ${version.date}`, margin, yPosition);
+                doc.text(`Itens deste cliente: ${clientItems.length}`, margin, yPosition + lineHeight);
+                yPosition += lineHeight * 3;
+                
+                // Adiciona linha separadora
+                doc.setDrawColor(200, 200, 200);
+                doc.line(margin, yPosition, pageWidth - margin, yPosition);
+                yPosition += 10;
+                
+                // Adiciona título dos itens
+                doc.setFontSize(14);
+                doc.setFont(undefined, 'bold');
+                doc.text('Itens Implementados:', margin, yPosition);
+                yPosition += 12;
+                
+                // Adiciona itens do cliente
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'normal');
+                clientItems.forEach((item, itemIndex) => {
+                    // Verifica se precisa de nova página
+                    if (yPosition > pageHeight - 40) {
+                        doc.addPage();
+                        yPosition = margin;
+                    }
+                    
+                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
+                    
+                    lines.forEach(line => {
+                        doc.text(line, margin + 5, yPosition);
+                        yPosition += lineHeight;
+                    });
+                    
+                    yPosition += 3; // Espaço entre itens
+                });
+                
+                // Adiciona seção de estatísticas
+                if (yPosition > pageHeight - 60) {
+                    doc.addPage();
+                    yPosition = margin;
+                }
+                
+                yPosition += 10;
+                doc.setFontSize(12);
+                doc.setFont(undefined, 'bold');
+                doc.text('Estatísticas desta Versão:', margin, yPosition);
+                yPosition += 10;
+                
+                doc.setFont(undefined, 'normal');
+                doc.setFontSize(10);
+                
+                // Calcula estatísticas
+                const totalItems = versionItems.length;
+                const migrationItems = clientItems.filter(item => item.migration).length;
+                
+                doc.text(`• Total de itens na versão: ${totalItems}`, margin + 5, yPosition);
+                yPosition += lineHeight;
+               
+                // Adiciona informações de contato
+                yPosition += 10;
+                doc.setFont(undefined, 'italic');
+                doc.text('Gerado por Version Reporter', margin, yPosition);
+                yPosition += lineHeight;
+                doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, margin, yPosition);
+                
+                // Adiciona rodapé
+                const totalPages = doc.internal.getNumberOfPages();
+                for (let i = 1; i <= totalPages; i++) {
+                    doc.setPage(i);
+                    doc.setFontSize(8);
+                    doc.setFont(undefined, 'italic');
+                    doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin - 20, pageHeight - 10);
+                    doc.text(`Confidencial - ${client}`, margin, pageHeight - 10);
+                }
+                
+                // Salva o PDF individual
+                const fileName = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}-${client.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+                doc.save(fileName);
+            });
+            
+            showModal('Sucesso', `${sortedClients.length} PDF(s) gerado(s) com sucesso! Cada cliente recebeu seu arquivo individual.`);
+            
+        } catch (error) {
+            console.error('Erro ao gerar PDFs por cliente:', error);
+            showModal('Erro', 'Não foi possível gerar os PDFs. Tente novamente.');
+        }
+    };
+
+    // Gerar PDF por cliente
+    document.getElementById('btn-download-pdf-client').onclick = () => {
+        try {
+            // Verifica se jsPDF está disponível
+            if (typeof window.jspdf === 'undefined') {
+                showModal('Erro', 'Biblioteca PDF não carregada. Recarregue a página e tente novamente.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            
+            // Gera PDF para cada cliente
+            sortedClients.forEach((client, index) => {
+                const clientItems = itemsByClient[client];
+                
+                // Cria novo documento para cada cliente
+                const doc = new jsPDF();
+                
+                // Configurações do documento
+                const pageWidth = doc.internal.pageSize.getWidth();
+                const pageHeight = doc.internal.pageSize.getHeight();
+                const margin = 20;
+                const lineHeight = 7;
+                let yPosition = margin;
+                
+                // Adiciona cabeçalho personalizado
+                doc.setFontSize(18);
+                doc.setFont(undefined, 'bold');
+                doc.text(`Relato: ${version.name}`, margin, yPosition);
+                yPosition += 12;
+                
+                doc.setFontSize(14);
+                doc.setFont(undefined, 'bold');
+                doc.text(`Cliente: ${client}`, margin, yPosition);
+                yPosition += 10;
+                
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'normal');
+                doc.text(`Versão: ${version.name}`, margin, yPosition);
+                yPosition += lineHeight;
+                doc.text(`Lançamento: ${version.date}`, margin, yPosition);
+                doc.text(`Itens deste cliente: ${clientItems.length}`, margin, yPosition + lineHeight);
+                yPosition += lineHeight * 3;
+                
+                // Adiciona linha separadora
+                doc.setDrawColor(200, 200, 200);
+                doc.line(margin, yPosition, pageWidth - margin, yPosition);
+                yPosition += 10;
+                
+                // Adiciona título dos itens
+                doc.setFontSize(14);
+                doc.setFont(undefined, 'bold');
+                doc.text('Itens Implementados:', margin, yPosition);
+                yPosition += 12;
+                
+                // Adiciona itens do cliente
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'normal');
+                clientItems.forEach((item, itemIndex) => {
+                    // Verifica se precisa de nova página
+                    if (yPosition > pageHeight - 40) {
+                        doc.addPage();
+                        yPosition = margin;
+                    }
+                    
+                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
+                    
+                    lines.forEach(line => {
+                        doc.text(line, margin + 5, yPosition);
+                        yPosition += lineHeight;
+                    });
+                    
+                    yPosition += 3; // Espaço entre itens
+                });
+                
+                // Adiciona seção de estatísticas
+                if (yPosition > pageHeight - 60) {
+                    doc.addPage();
+                    yPosition = margin;
+                }
+                
+                yPosition += 10;
+                doc.setFontSize(12);
+                doc.setFont(undefined, 'bold');
+                doc.text('Estatísticas desta Versão:', margin, yPosition);
+                yPosition += 10;
+                
+                doc.setFont(undefined, 'normal');
+                doc.setFontSize(10);
+                
+                // Calcula estatísticas
+                const totalItems = versionItems.length;
+                const migrationItems = clientItems.filter(item => item.migration).length;
+                
+                doc.text(`• Total de itens na versão: ${totalItems}`, margin + 5, yPosition);
+                yPosition += lineHeight;
+               
+                // Adiciona informações de contato
+                yPosition += 10;
+                doc.setFont(undefined, 'italic');
+                doc.text('Gerado por Version Reporter', margin, yPosition);
+                yPosition += lineHeight;
+                doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, margin, yPosition);
+                
+                // Adiciona rodapé
+                const totalPages = doc.internal.getNumberOfPages();
+                for (let i = 1; i <= totalPages; i++) {
+                    doc.setPage(i);
+                    doc.setFontSize(8);
+                    doc.setFont(undefined, 'italic');
+                    doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin - 20, pageHeight - 10);
+                    doc.text(`Confidencial - ${client}`, margin, pageHeight - 10);
+                }
+                
+                // Salva o PDF individual
+                const fileName = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}-${client.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+                doc.save(fileName);
+            });
+            
+            showModal('Sucesso', `${sortedClients.length} PDF(s) gerado(s) com sucesso! Cada cliente recebeu seu arquivo individual.`);
+            
+        } catch (error) {
+            console.error('Erro ao gerar PDFs por cliente:', error);
+            showModal('Erro', 'Não foi possível gerar os PDFs. Tente novamente.');
+        }
     };
 }
 
@@ -860,6 +2149,10 @@ async function renderPending() {
             // Atualiza estado local com os itens pendentes do banco
             if (data) {
                 const mappedItems = data.map(mapDatabaseItemToLocal);
+                
+                // Enriquece itens com clientes da tabela de relacionamento
+                await enrichItemsWithClients(mappedItems);
+                
                 // Substitui itens pendentes no state
                 state.items = state.items.filter(i => i.versionId).concat(mappedItems);
             }
@@ -898,7 +2191,7 @@ async function renderPending() {
                             <td><a href="${item.url.startsWith('http') ? item.url : 'https://' + item.url}" target="_blank">${item.ticket || 'Link'}</a></td>
                             <td>${item.name}</td>
                             <td>${formatDateToBR(item.date)}</td>
-                            <td>${getClientName(item.clientId)}</td>
+                            <td>${getClientName(item.clientIds || item.clientId)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
                             <td style="text-align: right;">
                                 <button class="btn-primary btn-sm btn-edit-item" data-id="${item.id}">Editar</button>
@@ -1129,6 +2422,18 @@ function renderVersionForm(id = null) {
         const name = e.target.versionName.value;
         const date = e.target.versionDate.value;
 
+        // Validação: Data de lançamento não pode ser anterior à data atual
+        if (date) {
+            const releaseDate = new Date(date);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); // Zera a hora para comparar apenas a data
+            
+            if (releaseDate < today) {
+                showModal('Erro', 'A Data de Lançamento não pode ser anterior à data atual.');
+                return;
+            }
+        }
+
         toggleLoading(true);
         try {
             if (supabaseClient) {
@@ -1157,16 +2462,71 @@ function renderVersionForm(id = null) {
 }
 
 // Etapa 7: Formulário de Item (Cadastro/Edição)
-function renderItemForm(id = null) {
+async function renderItemForm(id = null) {
     const isEdit = id !== null;
     const item = isEdit ? state.items.find(i => i.id == id) : null;
 
     pageTitle.textContent = isEdit ? 'Editar Item' : 'Novo Item';
 
-    const clientOptions = state.clients
+    // Se for edição, busca os clientes do banco
+    let itemClientIds = [];
+    if (isEdit && supabaseClient && item) {
+        console.log('Editando item no formulário:', item);
+        console.log('Item.clientIds:', item.clientIds);
+        console.log('Item.clientId:', item.clientId);
+        
+        const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.id);
+        console.log('Resultado da busca de clientes (form):', result);
+        
+        if (result.success) {
+            itemClientIds = result.clienteIds;
+            console.log('Clientes encontrados no banco (form):', itemClientIds);
+        } else {
+            console.error('Erro ao buscar clientes (form):', result.error);
+        }
+    } else if (isEdit && item && item.clientIds) {
+        itemClientIds = item.clientIds;
+        console.log('Usando clientIds do item local (form):', itemClientIds);
+    }
+
+    // Se for edição, busca os tipos do item
+    let itemTypes = [];
+    if (isEdit && item && item.tipos) {
+        try {
+            itemTypes = typeof item.tipos === 'string' ? JSON.parse(item.tipos) : item.tipos;
+        } catch (e) {
+            console.warn('Erro ao parsear tipos do item:', e);
+            itemTypes = [];
+        }
+    }
+
+    // Gera checkboxes para clientes
+    const clientCheckboxes = state.clients
         .filter(c => c.active)
-        .map(c => `<option value="${c.id}" ${item && item.clientId == c.id ? 'selected' : ''}>${c.name}</option>`)
-        .join('');
+        .map(c => {
+            const isChecked = itemClientIds.includes(c.id) ? 'checked' : '';
+            return `
+                <div class="checkbox-label" style="margin-bottom: 8px;">
+                    <input type="checkbox" id="item-client-${c.id}" name="clients" value="${c.id}" ${isChecked}>
+                    <label for="item-client-${c.id}" style="font-weight: normal;">${c.name}</label>
+                </div>
+            `;
+        }).join('');
+
+    // Gera checkboxes para tipos
+    const typeCheckboxes = [
+        { id: 'item-type-back', value: 'back', label: 'Backend' },
+        { id: 'item-type-front', value: 'front', label: 'Frontend' },
+        { id: 'item-type-banco', value: 'banco', label: 'Banco de Dados' }
+    ].map(type => {
+        const isChecked = itemTypes.includes(type.value) ? 'checked' : '';
+        return `
+            <div class="checkbox-label" style="margin-bottom: 8px;">
+                <input type="checkbox" id="${type.id}" name="types" value="${type.value}" ${isChecked}>
+                <label for="${type.id}" style="font-weight: normal;">${type.label}</label>
+            </div>
+        `;
+    }).join('');
 
     const formContainer = document.createElement('div');
     formContainer.innerHTML = `
@@ -1185,14 +2545,20 @@ function renderItemForm(id = null) {
                 <input type="date" id="item-date" name="itemDate" value="${item ? item.date : ''}" required>
             </div>
             <div class="form-group">
-                <label for="item-url">URL (Jira, Git, etc)</label>
+                <label for="item-url">URL (Jira, Git, Monday, etc)</label>
                 <input type="text" id="item-url" name="itemUrl" value="${item ? item.url : ''}">
             </div>
             <div class="form-group">
-                <label for="item-client">Cliente</label>
-                <select id="item-client" name="itemClient" required>
-                    ${clientOptions}
-                </select>
+                <label>Clientes (selecione um ou mais)</label>
+                <div style="max-height: 150px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                    ${clientCheckboxes}
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Tipos (selecione um ou mais)</label>
+                <div style="max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                    ${typeCheckboxes}
+                </div>
             </div>
             <div class="form-group">
                 <label class="checkbox-label">
@@ -1215,14 +2581,32 @@ function renderItemForm(id = null) {
         e.preventDefault();
         const form = e.target;
         
+        // Coleta múltiplos clientes selecionados
+        const selectedClients = Array.from(form.querySelectorAll('input[name="clients"]:checked'))
+            .map(checkbox => parseInt(checkbox.value));
+        
+        // Coleta múltiplos tipos selecionados
+        const selectedTypes = Array.from(form.querySelectorAll('input[name="types"]:checked'))
+            .map(checkbox => checkbox.value);
+        
+        if (selectedClients.length === 0) {
+            showModal('Erro', 'Selecione pelo menos um cliente.');
+            return;
+        }
+        
         const payload = {
             Numero: form.itemTicket.value,
             Descricao: form.itemName.value,
             Data: form.itemDate.value,
             Url: form.itemUrl.value,
             Migration: form.itemMigration.checked,
-            IdCliente: form.itemClient.value ? parseInt(form.itemClient.value) : null
+            IdCliente: selectedClients.length > 0 ? selectedClients[0] : null // Usa apenas o primeiro por enquanto
         };
+        
+        // Adiciona Tipos apenas se a coluna existir (para evitar erro)
+        if (selectedTypes.length > 0) {
+            payload.Tipos = JSON.stringify(selectedTypes);
+        }
 
         if (supabaseClient) {
             let error = null;
@@ -1230,11 +2614,22 @@ function renderItemForm(id = null) {
             if (isEdit) {
                 const res = await supabaseClient.from('Item').update(payload).eq('Id', id);
                 error = res.error;
+                
+                // Atualiza múltiplos clientes na tabela de relacionamento
+                if (!error) {
+                    await ClientesAPI.salvarClientesItem(supabaseClient, id, selectedClients);
+                }
             } else {
                 // Novo item (VersaoId padrão null no banco ou omitido)
                 payload.IdVersao = null;
-                const res = await supabaseClient.from('Item').insert([payload]);
+                const res = await supabaseClient.from('Item').insert([payload]).select();
                 error = res.error;
+                
+                // Salva múltiplos clientes na tabela de relacionamento
+                if (!error && res.data && res.data.length > 0) {
+                    const itemId = res.data[0].Id || res.data[0].id;
+                    await ClientesAPI.salvarClientesItem(supabaseClient, itemId, selectedClients);
+                }
             }
 
             if (error) {
@@ -1250,6 +2645,7 @@ function renderItemForm(id = null) {
                 item.url = payload.Url;
                 item.migration = payload.Migration;
                 item.clientId = payload.IdCliente;
+                item.clientIds = selectedClients;
             } else {
                 const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
                 state.items.push({
@@ -1260,6 +2656,7 @@ function renderItemForm(id = null) {
                     url: payload.Url,
                     migration: payload.Migration,
                     clientId: payload.IdCliente,
+                    clientIds: selectedClients,
                     versionId: null
                 });
             }
@@ -1290,6 +2687,9 @@ function navigateTo(route, param = null) {
             break;
         case 'clients':
             renderClients();
+            break;
+        case 'metrics':
+            renderMetrics();
             break;
         case 'client-form':
             renderClientForm(param);
@@ -1324,6 +2724,51 @@ function initializeApp() {
     } else {
         // Usuário não está logado, mostra tela de login
         renderLogin();
+    }
+}
+
+// Helper para verificar estado da tabela ItemCliente
+async function debugItemClienteTable() {
+    if (!supabaseClient) return;
+    
+    try {
+        console.log('=== DEBUG ItemCliente ===');
+        
+        // 1. Verificar se tabela existe
+        const { data: tableData, error: tableError } = await supabaseClient
+            .from('ItemCliente')
+            .select('*')
+            .limit(5);
+        
+        if (tableError) {
+            console.error('Tabela ItemCliente não acessível:', tableError);
+            return;
+        }
+        
+        console.log('Dados na tabela ItemCliente:', tableData);
+        
+        // 2. Verificar itens existentes
+        const { data: itemsData, error: itemsError } = await supabaseClient
+            .from('Item')
+            .select('Id, Descricao, IdCliente')
+            .limit(5);
+        
+        if (itemsError) {
+            console.error('Erro ao buscar itens:', itemsError);
+            return;
+        }
+        
+        console.log('Itens existentes:', itemsData);
+        
+        // 3. Para cada item, verificar seus clientes
+        for (const item of itemsData || []) {
+            const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.Id);
+            console.log(`Item ${item.Id} (${item.Descricao}):`, result);
+        }
+        
+        console.log('=== FIM DEBUG ===');
+    } catch (error) {
+        console.error('Erro no debug:', error);
     }
 }
 
@@ -1385,14 +2830,107 @@ document.addEventListener('DOMContentLoaded', setupMobileResponsiveness);
 
 // Helper para mapear objeto do Banco para Objeto Local
 function mapDatabaseItemToLocal(row) {
+    // Processa clientes: tenta JSON primeiro, depois usa IdCliente como fallback
+    let clientIds = [];
+    if (row.IdClientes) {
+        try {
+            clientIds = JSON.parse(row.IdClientes);
+        } catch (e) {
+            // Se não for JSON válido, usa IdCliente como array
+            if (row.IdCliente) {
+                clientIds = [row.IdCliente];
+            }
+        }
+    } else if (row.IdCliente) {
+        clientIds = [row.IdCliente];
+    }
+    
+    // Processa tipos: tenta JSON
+    let tipos = [];
+    if (row.Tipos || row.tipos) {
+        try {
+            tipos = typeof (row.Tipos || row.tipos) === 'string' 
+                ? JSON.parse(row.Tipos || row.tipos) 
+                : (row.Tipos || row.tipos);
+        } catch (e) {
+            console.warn('Erro ao parsear tipos do item:', e);
+            tipos = [];
+        }
+    }
+    
     return {
         id: row.Id || row.id,
         ticket: row.Numero || row.numero || '',
-        name: row.Descricao || row.descricao || row.Nome || row.nome || '',
+        name: row.Descricao || row.descricao || '',
         date: (row.Data || row.data || '').split('T')[0],
         url: row.Url || row.url || '',
         migration: row.Migration || row.migration,
+        tipos: tipos, // Array de tipos: ["back", "front", "banco"]
         clientId: row.IdCliente || row.clienteid,
+        clientIds: clientIds, // Array de IDs de clientes
         versionId: row.IdVersao || row.versaoid
     };
+}
+
+// Função para carregar todos os itens do banco
+async function refreshItemsState() {
+    if (!supabaseClient) return;
+    
+    try {
+        console.log('Carregando itens do banco...');
+        let { data, error } = await supabaseClient.from('Item').select('*');
+        
+        if (error) {
+            console.warn('Fallback: tentando buscar itens com tabela minúscula');
+            const retry = await supabaseClient.from('item').select('*');
+            if (!retry.error) data = retry.data;
+            else throw retry.error;
+        }
+        
+        if (data) {
+            const mappedItems = data.map(mapDatabaseItemToLocal);
+            
+            // Enriquece itens com clientes da tabela de relacionamento
+            await enrichItemsWithClients(mappedItems);
+            
+            // Atualiza estado global
+            state.items = mappedItems;
+            console.log('Itens carregados:', state.items.length);
+        }
+    } catch (error) {
+        console.error('Erro ao carregar itens:', error);
+    }
+}
+
+// Helper para enriquecer itens com clientes da tabela de relacionamento
+async function enrichItemsWithClients(items) {
+    if (!supabaseClient || !items || items.length === 0) return items;
+    
+    try {
+        const itemIds = items.map(item => item.id);
+        const { itemsMap } = await ClientesAPI.buscarItensComClientes(supabaseClient, itemIds);
+        
+        console.log('Enriching items with clients:', { itemIds, itemsMap });
+        
+        items.forEach(item => {
+            console.log(`Processing item ${item.id}:`, {
+                existingClientIds: item.clientIds,
+                clientId: item.clientId,
+                foundClients: itemsMap[item.id]
+            });
+            
+            if (itemsMap[item.id] && itemsMap[item.id].length > 0) {
+                item.clientIds = itemsMap[item.id];
+                console.log(`Item ${item.id} clientes atualizados:`, item.clientIds);
+            } else if (!item.clientIds || item.clientIds.length === 0) {
+                // Fallback para IdCliente único se não houver relacionamentos
+                item.clientIds = item.clientId ? [item.clientId] : [];
+                console.log(`Item ${item.id} usando fallback clientId:`, item.clientIds);
+            }
+        });
+    } catch (error) {
+        console.error('Erro ao enriquecer itens com clientes:', error);
+    }
+    
+    return items;
 }

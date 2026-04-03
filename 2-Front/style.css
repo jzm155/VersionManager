@@ -140,17 +140,88 @@ body {
 
 .status-pendente {
     background-color: #f39c12;
-    color: white;
+    color: white !important;
+    font-weight: bold;
 }
 
 .status-finalizado {
     background-color: #27ae60;
-    color: white;
+    color: white !important;
+    font-weight: bold;
 }
 
 .status-cancelado {
     background-color: #c0392b;
-    color: white;
+    color: white !important;
+    font-weight: bold;
+}
+
+/* ==========================================================================
+   Estilos de Filtros
+   ========================================================================== */
+
+.filters-container {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border: 1px solid #e1e4e8;
+}
+
+.filters-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr auto;
+    gap: 15px;
+    align-items: end;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.filter-group label {
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #333;
+    font-size: 0.9rem;
+}
+
+.filter-group input,
+.filter-group select {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
+}
+
+.filter-group input:focus,
+.filter-group select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.filter-group input::placeholder {
+    color: #999;
+}
+
+#btn-clear-filters {
+    padding: 8px 16px;
+    white-space: nowrap;
+}
+
+/* Responsividade dos filtros */
+@media (max-width: 768px) {
+    .filters-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .filter-group {
+        width: 100%;
+    }
 }
 
 /* ==========================================================================
@@ -566,4 +637,422 @@ button:disabled {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   Estilos de Métricas
+   ========================================================================== */
+
+.metrics-container {
+    width: 100%;
+}
+
+/* Estilos específicos para filtros de métricas */
+#metrics-filter-year {
+    min-width: 120px;
+}
+
+/* Contador de resultados de métricas */
+#metrics-result-count {
+    background-color: #f8f9fa;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border-left: 4px solid #3498db;
+}
+
+.metrics-card {
+    background-color: white;
+    border-radius: 8px;
+    padding: 25px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border: 1px solid #e1e4e8;
+}
+
+.metrics-card h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #2c3e50;
+    font-size: 1.4rem;
+    border-bottom: 2px solid #f0f2f5;
+    padding-bottom: 12px;
+}
+
+/* Grid de Métricas por Período */
+.period-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+.period-card {
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    padding: 15px;
+    border: 1px solid #e9ecef;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.period-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.period-header h3 {
+    margin: 0 0 15px 0;
+    font-size: 1.1rem;
+    color: #34495e;
+    text-align: center;
+    border-bottom: 2px solid #dee2e6;
+    padding-bottom: 8px;
+}
+
+.period-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.stat-label {
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.stat-value {
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: #2c3e50;
+}
+
+.stat-breakdown {
+    display: flex;
+    justify-content: space-around;
+    gap: 8px;
+    padding: 10px 0;
+    background-color: white;
+    border-radius: 6px;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.stat-item.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.stat-item.warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.stat-item.danger {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Gráfico de Tendências */
+.trends-chart {
+    width: 100%;
+}
+
+.chart-container {
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-end;
+    height: 300px;
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    gap: 15px;
+}
+
+.chart-bar-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    max-width: 120px;
+}
+
+.chart-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+.chart-bars {
+    display: flex;
+    gap: 4px;
+    align-items: flex-end;
+    height: 250px;
+    width: 100%;
+}
+
+.chart-bar {
+    flex: 1;
+    min-height: 5px;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    position: relative;
+}
+
+.chart-bar:hover {
+    opacity: 0.8;
+    transform: scaleY(1.05);
+}
+
+.chart-bar.success {
+    background: linear-gradient(to top, #27ae60, #2ecc71);
+}
+
+.chart-bar.warning {
+    background: linear-gradient(to top, #f39c12, #f1c40f);
+}
+
+.chart-bar.danger {
+    background: linear-gradient(to top, #c0392b, #e74c3c);
+}
+
+.chart-legend {
+    display: flex;
+    justify-content: center;
+    gap: 25px;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+
+.legend-item.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.legend-item.warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.legend-item.danger {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Grid de Métricas por Cliente */
+.client-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.client-card {
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid #e9ecef;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.client-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.client-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #dee2e6;
+}
+
+.client-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #34495e;
+}
+
+.total-badge {
+    background-color: #3498db;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.client-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 15px;
+}
+
+.stat-item.migration {
+    background-color: #e8f5e8;
+    color: #27ae60;
+}
+
+.stat-item.regular {
+    background-color: #e3f2fd;
+    color: #2196f3;
+}
+
+.migration-percentage {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-top: 1px solid #dee2e6;
+}
+
+.client-items-toggle {
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+.btn-toggle-items {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background-color 0.2s;
+}
+
+.btn-toggle-items:hover {
+    background-color: #5a6268;
+}
+
+.client-items-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.item-detail {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f3f5;
+    transition: background-color 0.2s;
+}
+
+.item-detail:hover {
+    background-color: #f8f9fa;
+}
+
+.item-detail:last-child {
+    border-bottom: none;
+}
+
+.item-icon {
+    font-size: 1rem;
+    width: 20px;
+    text-align: center;
+}
+
+.item-description {
+    flex: 1;
+    font-size: 0.9rem;
+    color: #495057;
+}
+
+.item-date {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+.migration-item {
+    border-left: 3px solid #27ae60;
+}
+
+.regular-item {
+    border-left: 3px solid #2196f3;
+}
+
+/* Responsividade para Métricas */
+@media (max-width: 768px) {
+    .period-metrics-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .client-metrics-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .chart-container {
+        height: 250px;
+        padding: 15px 10px;
+    }
+    
+    .chart-bars {
+        height: 200px;
+    }
+    
+    .chart-bar-group {
+        max-width: none;
+    }
+    
+    .chart-label {
+        font-size: 0.7rem;
+    }
+    
+    .chart-legend {
+        gap: 10px;
+    }
+    
+    .legend-item {
+        font-size: 0.8rem;
+        padding: 4px 8px;
+    }
+    
+    .client-header {
+        flex-direction: column;
+        gap: 8px;
+        text-align: center;
+    }
+    
+    .item-detail {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+    
+    .item-date {
+        align-self: flex-end;
+    }
 }

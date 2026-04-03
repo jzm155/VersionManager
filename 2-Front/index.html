@@ -4,17 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Version Reporter</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
     <div class="app-container">
         <!-- Sidebar (Etapa 1) -->
         <aside class="sidebar">
-            <h2>Version Reporter</h2>
+            <h2>🚀 Version Reporter</h2>
             <nav>
                 <a href="#" data-route="versions" class="nav-link active">Versões</a>
                 <a href="#" data-route="pending" class="nav-link">Itens Pendentes</a>
                 <a href="#" data-route="clients" class="nav-link">Clientes</a>
+                <a href="#" data-route="metrics" class="nav-link">Métricas</a>
             </nav>
         </aside>
 
@@ -32,6 +35,7 @@
         </div>
     </div>
 
+    <script src="clientesAPI.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
