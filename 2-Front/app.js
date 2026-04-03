@@ -2,6 +2,7 @@
 const state = {
     versions: [],
     clients: [],
+    types: [],
     items: [],
     isAuthenticated: false,
     currentUser: null
@@ -28,6 +29,8 @@ function initSupabase() {
     // @ts-ignore
     supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     refreshClientsState();
+    // refreshTypesState() is already called here.
+    refreshTypesState();
     refreshVersionsState().then(() => {
         if (document.querySelector('.nav-link[data-route="versions"]').classList.contains('active')) {
             renderVersions();
@@ -67,6 +70,30 @@ async function refreshClientsState() {
         id: row.Id || row.id || row.ID,
         name: row.Nome || row.nome || row.Name || row.name || row.NOME,
         active: true // Define como true pois a tabela não tem coluna de status
+    }));
+}
+
+async function refreshTypesState() {
+    if (!supabaseClient) return;
+
+    // Busca da tabela 'Tipo' ordenada por Nome
+    let { data, error } = await supabaseClient.from('Tipo').select('*').order('Name', { ascending: true });
+
+    // Fallback para minúsculo caso o banco tenha normalizado os nomes das tabelas
+    if (error) {
+        const retry = await supabaseClient.from('tipo').select('*').order('name', { ascending: true });
+        if (!retry.error) { data = retry.data; error = null; }
+    }
+
+    if (error) {
+        console.error('Erro ao buscar tipos do Supabase:', error);
+        return;
+    }
+
+    // Mapeia os campos Id e Name para o estado local (id e name)
+    state.types = (data || []).map(row => ({
+        id: row.Id || row.id,
+        name: row.Name || row.name || row.Nome || row.nome
     }));
 }
 
@@ -667,6 +694,10 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
     // Se for edição, busca os clientes do banco
     let itemClientIds = [];
     if (isEdit && supabaseClient && item) {
+        // Fetch client IDs from the ItemCliente join table
+        // This assumes ClientesAPI.buscarClientesItem is defined and works with the new join table
+        // The existing code already calls this, so it should be fine if ClientesAPI is updated.
+        
         console.log('Editando item:', item);
         console.log('Item.clientIds:', item.clientIds);
         console.log('Item.clientId:', item.clientId);
@@ -679,6 +710,20 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
             console.log('Clientes encontrados no banco:', itemClientIds);
         } else {
             console.error('Erro ao buscar clientes:', result.error);
+        }
+    } else if (isEdit && item && item.clientIds) { // Fallback for mock data or if clientIds is already in item
+        itemClientIds = item.clientIds;
+        console.log('Usando clientIds do item local:', itemClientIds);
+    }
+
+    // Se for edição, busca os tipos do item
+    let itemTypes = [];
+    if (isEdit && supabaseClient && item) {
+        const result = await TiposAPI.buscarTiposItem(supabaseClient, item.id);
+        if (result.success) {
+            itemTypes = result.typeNames;
+        } else {
+            console.error('Erro ao buscar tipos:', result.error);
         }
     } else if (isEdit && item && item.clientIds) {
         itemClientIds = item.clientIds;
@@ -731,18 +776,12 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
                 <div class="form-group">
                     <label>Tipos (selecione um ou mais)</label>
                     <div style="max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
-                        <div class="checkbox-label" style="margin-bottom: 8px;">
-                            <input type="checkbox" id="item-type-back" name="types" value="back">
-                            <label for="item-type-back" style="font-weight: normal;">Backend</label>
-                        </div>
-                        <div class="checkbox-label" style="margin-bottom: 8px;">
-                            <input type="checkbox" id="item-type-front" name="types" value="front">
-                            <label for="item-type-front" style="font-weight: normal;">Frontend</label>
-                        </div>
-                        <div class="checkbox-label" style="margin-bottom: 8px;">
-                            <input type="checkbox" id="item-type-banco" name="types" value="banco">
-                            <label for="item-type-banco" style="font-weight: normal;">Banco de Dados</label>
-                        </div>
+                        ${state.types.map(t => `
+                            <div class="checkbox-label" style="margin-bottom: 8px;">
+                                <input type="checkbox" id="modal-type-${t.id}" name="types" value="${t.name}">
+                                <label for="modal-type-${t.id}" style="font-weight: normal;">${t.name}</label>
+                            </div>
+                        `).join('')}
                     </div>
                 </div>
                 <div class="form-group">
@@ -786,14 +825,8 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
             Data: document.getElementById('modal-item-date').value,
             Url: document.getElementById('modal-item-url').value,
             Migration: document.getElementById('modal-item-migration').checked,
-            IdCliente: selectedClients.length > 0 ? selectedClients[0] : null, // Usa apenas o primeiro por enquanto
             IdVersao: versionId // VINCULA AUTOMATICAMENTE SE FOR PASSADO
         };
-        
-        // Adiciona Tipos apenas se a coluna existir (para evitar erro)
-        if (selectedTypes.length > 0) {
-            payload.Tipos = JSON.stringify(selectedTypes);
-        }
         
         // Armazena múltiplos clientes no localStorage para exibição
         const itemClientIds = selectedClients;
@@ -809,6 +842,7 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
                     const newItem = mapDatabaseItemToLocal(data[0]);
                     const itemId = data[0].Id || data[0].id;
                     
+                    await TiposAPI.salvarTiposItem(supabaseClient, itemId, selectedTypes); // Salva múltiplos tipos
                     // Salva múltiplos clientes na tabela de relacionamento
                     await ClientesAPI.salvarClientesItem(supabaseClient, itemId, itemClientIds);
                     
@@ -827,7 +861,8 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
                     url: payload.Url,
                     migration: payload.Migration,
                     clientId: payload.IdCliente,
-                    clientIds: selectedClients,
+                    clientIds: selectedClients, // Mock para clientes
+                    tipos: selectedTypes, // Mock para tipos
                     versionId: payload.IdVersao
                 });
             }
@@ -840,6 +875,13 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
             toggleLoading(false);
         }
     };
+    // Pre-select types if editing
+    if (isEdit && itemTypes.length > 0) {
+        itemTypes.forEach(typeName => {
+            const checkbox = document.querySelector(`#modal-item-form input[name="types"][value="${typeName}"]`);
+            if (checkbox) checkbox.checked = true;
+        });
+    }
 }
 
 // Função para abrir o Modal de Vínculo de Itens
@@ -970,7 +1012,7 @@ function renderLogin() {
                     const user = data[0];
                     state.currentUser = {
                         id: user.Id || user.id,
-                        name: user.Name || user.name // Captura a propriedade Name
+                        name: user.Name || user.name
                     };
                     localStorage.setItem('version_reporter_user', JSON.stringify(state.currentUser));
                     updateUserDisplay();
@@ -1061,6 +1103,18 @@ async function fetchMetricsData() {
         } else {
             console.log('Relacionamentos ItemCliente encontrados:', itemClients?.length || 0);
         }
+
+        // Busca relacionamentos ItemTipo
+        console.log('Buscando relacionamentos ItemTipo...');
+        const { data: itemTypes, error: itemTypeError } = await supabaseClient
+            .from('ItemTipo')
+            .select('IdItem, IdTipo');
+        
+        let itemTipoData = itemTypes;
+        if (itemTypeError) {
+            console.warn('Tabela ItemTipo não encontrada, erro:', itemTypeError);
+            itemTipoData = null;
+        }
         
         // Mostra amostra dos dados para debug
         if (items && items.length > 0) {
@@ -1078,7 +1132,7 @@ async function fetchMetricsData() {
         
         console.log('=== FIM DEBUG fetchMetricsData ===');
         
-        return { versions, items, clients, itemClients: itemClientData };
+        return { versions, items, clients, itemClients: itemClientData, itemTypes: itemTipoData };
     } catch (error) {
         console.error('Erro ao buscar métricas:', error);
         return null;
@@ -1596,6 +1650,7 @@ function renderReportView(versionId) {
     const version = state.versions.find(v => v.id === versionId);
     const versionItems = state.items.filter(i => i.versionId === versionId);
     
+    // Ensure types are loaded for items if not already
     pageTitle.textContent = `Relato: ${version.name}`;
     
     // Agrupa itens por cliente
@@ -1622,11 +1677,12 @@ function renderReportView(versionId) {
     const generateItemsContent = (formatItem) => {
         let content = '';
         sortedClients.forEach(client => {
-            if (formatItem === 'discord') {
-                content += `**${client}**\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
-            } else if (formatItem === 'whatsapp') {
-                content += `*${client}*\n` + itemsByClient[client].map(item => `• ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
-            } else if (formatItem === 'markdown') {
+            const formatItemText = (item) => `${item.name}${item.migration ? ' (migrations)' : ''}${item.tipos && item.tipos.length > 0 ? ` [${item.tipos.join(', ')}]` : ''}`;
+            if (formatItem === 'discord') { // Discord uses **bold** and - list
+                content += `**${client}**\n` + itemsByClient[client].map(item => `- ${formatItemText(item)}`).join('\n') + '\n\n';
+            } else if (formatItem === 'whatsapp') { // WhatsApp uses *italic* and • list
+                content += `*${client}*\n` + itemsByClient[client].map(item => `• ${formatItemText(item)}`).join('\n') + '\n\n';
+            } else if (formatItem === 'markdown') { // Markdown uses ### headers and - list
                 content += `### ${client}\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' *(migrations)*' : ''}`).join('\n') + '\n\n';
             }
         });
@@ -1691,8 +1747,6 @@ function renderReportView(versionId) {
                 <button class="btn-primary" id="btn-copy-report">📋 Copiar Texto</button>
                 <button class="btn-secondary" id="btn-download-report">💾 Baixar como Arquivo</button>
                 <button class="btn-secondary" id="btn-download-pdf" style="background-color: #dc3545;">📄 Baixar PDF</button>
-                <button class="btn-secondary" id="btn-download-pdf-client" style="background-color: #28a745;">👥 PDF por Cliente</button>
-                <button class="btn-secondary" id="btn-download-pdf-client" style="background-color: #28a745;">👥 PDF por Cliente</button>
             </div>
 
             <!-- Informações -->
@@ -1869,7 +1923,7 @@ function renderReportView(versionId) {
     };
 
     // Gerar PDF por cliente
-    document.getElementById('btn-download-pdf-client').onclick = () => {
+    document.getElementById('btn-download-pdf-client').onclick = () => { // This button is duplicated in the HTML, will fix.
         try {
             // Verifica se jsPDF está disponível
             if (typeof window.jspdf === 'undefined') {
@@ -1933,7 +1987,7 @@ function renderReportView(versionId) {
                         yPosition = margin;
                     }
                     
-                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}${item.tipos && item.tipos.length > 0 ? ` [${item.tipos.join(', ')}]` : ''}`;
                     const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
                     
                     lines.forEach(line => {
@@ -1997,7 +2051,7 @@ function renderReportView(versionId) {
     };
 
     // Gerar PDF por cliente
-    document.getElementById('btn-download-pdf-client').onclick = () => {
+    document.getElementById('btn-download-pdf-client').onclick = () => { // This button is duplicated in the HTML, will fix.
         try {
             // Verifica se jsPDF está disponível
             if (typeof window.jspdf === 'undefined') {
@@ -2061,7 +2115,7 @@ function renderReportView(versionId) {
                         yPosition = margin;
                     }
                     
-                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}${item.tipos && item.tipos.length > 0 ? ` [${item.tipos.join(', ')}]` : ''}`;
                     const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
                     
                     lines.forEach(line => {
@@ -2151,6 +2205,7 @@ async function renderPending() {
                 const mappedItems = data.map(mapDatabaseItemToLocal);
                 
                 // Enriquece itens com clientes da tabela de relacionamento
+                await enrichItemsWithTypes(mappedItems); // New call
                 await enrichItemsWithClients(mappedItems);
                 
                 // Substitui itens pendentes no state
@@ -2182,6 +2237,7 @@ async function renderPending() {
                         <th style="min-width: 110px;">Data</th>
                         <th>Cliente</th>
                         <th>Migration</th>
+                        <th>Tipos</th>
                         <th style="text-align: right;">Ações</th>
                     </tr>
                 </thead>
@@ -2193,6 +2249,7 @@ async function renderPending() {
                             <td>${formatDateToBR(item.date)}</td>
                             <td>${getClientName(item.clientIds || item.clientId)}</td>
                             <td>${item.migration ? 'Sim' : 'Não'}</td>
+                            <td>${item.tipos && item.tipos.length > 0 ? item.tipos.join(', ') : 'N/A'}</td>
                             <td style="text-align: right;">
                                 <button class="btn-primary btn-sm btn-edit-item" data-id="${item.id}">Editar</button>
                                 <button class="btn-secondary btn-sm btn-del-item" data-id="${item.id}" style="background-color: #e74c3c;">Excluir</button>
@@ -2475,6 +2532,7 @@ async function renderItemForm(id = null) {
         console.log('Item.clientIds:', item.clientIds);
         console.log('Item.clientId:', item.clientId);
         
+        // Use the ClientesAPI to fetch client IDs from the join table
         const result = await ClientesAPI.buscarClientesItem(supabaseClient, item.id);
         console.log('Resultado da busca de clientes (form):', result);
         
@@ -2488,14 +2546,15 @@ async function renderItemForm(id = null) {
         itemClientIds = item.clientIds;
         console.log('Usando clientIds do item local (form):', itemClientIds);
     }
-
-    // Se for edição, busca os tipos do item
+    
+    // Fetch type names from the ItemTipo join table
     let itemTypes = [];
-    if (isEdit && item && item.tipos) {
-        try {
-            itemTypes = typeof item.tipos === 'string' ? JSON.parse(item.tipos) : item.tipos;
-        } catch (e) {
-            console.warn('Erro ao parsear tipos do item:', e);
+    if (isEdit && supabaseClient && item) {
+        const result = await TiposAPI.buscarTiposItem(supabaseClient, item.id);
+        if (result.success) {
+            itemTypes = result.typeNames;
+        } else {
+            console.error('Erro ao buscar tipos (form):', result.error);
             itemTypes = [];
         }
     }
@@ -2514,16 +2573,12 @@ async function renderItemForm(id = null) {
         }).join('');
 
     // Gera checkboxes para tipos
-    const typeCheckboxes = [
-        { id: 'item-type-back', value: 'back', label: 'Backend' },
-        { id: 'item-type-front', value: 'front', label: 'Frontend' },
-        { id: 'item-type-banco', value: 'banco', label: 'Banco de Dados' }
-    ].map(type => {
-        const isChecked = itemTypes.includes(type.value) ? 'checked' : '';
+    const typeCheckboxes = state.types.map(t => {
+        const isChecked = itemTypes.includes(t.name) ? 'checked' : '';
         return `
             <div class="checkbox-label" style="margin-bottom: 8px;">
-                <input type="checkbox" id="${type.id}" name="types" value="${type.value}" ${isChecked}>
-                <label for="${type.id}" style="font-weight: normal;">${type.label}</label>
+                <input type="checkbox" id="item-type-${t.id}" name="types" value="${t.name}" ${isChecked}>
+                <label for="item-type-${t.id}" style="font-weight: normal;">${t.name}</label>
             </div>
         `;
     }).join('');
@@ -2602,11 +2657,6 @@ async function renderItemForm(id = null) {
             Migration: form.itemMigration.checked,
             IdCliente: selectedClients.length > 0 ? selectedClients[0] : null // Usa apenas o primeiro por enquanto
         };
-        
-        // Adiciona Tipos apenas se a coluna existir (para evitar erro)
-        if (selectedTypes.length > 0) {
-            payload.Tipos = JSON.stringify(selectedTypes);
-        }
 
         if (supabaseClient) {
             let error = null;
@@ -2617,6 +2667,7 @@ async function renderItemForm(id = null) {
                 
                 // Atualiza múltiplos clientes na tabela de relacionamento
                 if (!error) {
+                    await TiposAPI.salvarTiposItem(supabaseClient, id, selectedTypes); // Save types
                     await ClientesAPI.salvarClientesItem(supabaseClient, id, selectedClients);
                 }
             } else {
@@ -2627,6 +2678,7 @@ async function renderItemForm(id = null) {
                 
                 // Salva múltiplos clientes na tabela de relacionamento
                 if (!error && res.data && res.data.length > 0) {
+                    await TiposAPI.salvarTiposItem(supabaseClient, itemId, selectedTypes); // Save types
                     const itemId = res.data[0].Id || res.data[0].id;
                     await ClientesAPI.salvarClientesItem(supabaseClient, itemId, selectedClients);
                 }
@@ -2646,6 +2698,7 @@ async function renderItemForm(id = null) {
                 item.migration = payload.Migration;
                 item.clientId = payload.IdCliente;
                 item.clientIds = selectedClients;
+                item.tipos = selectedTypes; // Mock for types
             } else {
                 const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
                 state.items.push({
@@ -2656,12 +2709,279 @@ async function renderItemForm(id = null) {
                     url: payload.Url,
                     migration: payload.Migration,
                     clientId: payload.IdCliente,
+                    tipos: selectedTypes, // Mock for types
                     clientIds: selectedClients,
                     versionId: null
                 });
             }
         }
         navigateTo('pending');
+    };
+}
+
+// Renderizar Aba de Tipos
+async function renderTypes() {
+    pageTitle.textContent = 'Tipos de Item';
+
+    toggleLoading(true);
+    try {
+        if (supabaseClient) {
+            await refreshTypesState();
+        }
+    } finally {
+        toggleLoading(false);
+    }
+
+    const container = document.createElement('div');
+    container.innerHTML = `
+        <div class="header-container">
+            <h1>Gerenciamento de Tipos</h1>
+            <button class="btn-primary" id="btn-add-type">Adicionar Tipo</button>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Nome</th>
+                        <th style="text-align: right;">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${state.types.map(type => `
+                        <tr>
+                            <td>${type.id}</td>
+                            <td>${type.name}</td>
+                            <td style="text-align: right;">
+                                <button class="btn-primary btn-sm btn-edit-type" data-id="${type.id}">Editar</button>
+                                <button class="btn-secondary btn-sm btn-del-type" data-id="${type.id}" style="background-color: #e74c3c;">Excluir</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                    ${state.types.length === 0 ? '<tr><td colspan="3" style="text-align: center;">Nenhum tipo cadastrado.</td></tr>' : ''}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    contentArea.innerHTML = '';
+    contentArea.appendChild(container);
+
+    document.getElementById('btn-add-type').onclick = () => navigateTo('type-form');
+
+    document.querySelectorAll('.btn-edit-type').forEach(btn => btn.onclick = (e) => {
+        navigateTo('type-form', e.target.dataset.id);
+    });
+
+    document.querySelectorAll('.btn-del-type').forEach(btn => {
+        btn.onclick = (e) => {
+            const id = e.target.dataset.id;
+            showModal('Excluir Tipo', 'Tem certeza que deseja excluir este tipo?', async () => {
+                if (supabaseClient) {
+                    // Tenta deletar usando a PK 'Id'
+                    let { error } = await supabaseClient.from('Tipo').delete().eq('Id', id);
+                    if (error) {
+                        error = (await supabaseClient.from('tipo').delete().eq('id', id)).error;
+                    }
+                    if (error) {
+                        showModal('Erro', 'Erro ao excluir do banco: ' + error.message);
+                        return;
+                    }
+                    await refreshTypesState();
+                }
+                renderTypes();
+            }, 'confirm');
+        };
+    });
+}
+
+function renderTypeForm(id = null) {
+    const isEdit = id !== null;
+    const type = isEdit ? state.types.find(t => t.id == id) : null;
+
+    pageTitle.textContent = isEdit ? 'Editar Tipo' : 'Novo Tipo';
+
+    const formContainer = document.createElement('div');
+    formContainer.innerHTML = `
+        <form id="type-form" class="form-card">
+            <h2>${isEdit ? 'Editar Tipo' : 'Cadastrar Novo Tipo'}</h2>
+            <div class="form-group">
+                <label for="type-name">Nome do Tipo</label>
+                <input type="text" id="type-name" name="typeName" value="${type ? type.name : ''}" required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn-secondary" id="btn-cancel">Cancelar</button>
+                <button type="submit" class="btn-primary">Salvar</button>
+            </div>
+        </form>
+    `;
+
+    contentArea.innerHTML = '';
+    contentArea.appendChild(formContainer);
+
+    document.getElementById('btn-cancel').onclick = () => navigateTo('types');
+    document.getElementById('type-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const typeName = e.target.typeName.value;
+        
+        toggleLoading(true);
+        try {
+            if (supabaseClient) {
+                const payload = { Name: typeName };
+                
+                if (isEdit) {
+                    // Atualização: eq('Id', id) e campo 'Name'
+                    let { error } = await supabaseClient.from('Tipo').update(payload).eq('Id', id);
+                    if (error) {
+                        error = (await supabaseClient.from('tipo').update({ name: typeName }).eq('id', id)).error;
+                    }
+                    if (error) throw error;
+                } else {
+                    // Inserção: campo 'Name'
+                    const { error } = await supabaseClient.from('Tipo').insert([payload]);
+                    if (error) throw error;
+                }
+                await refreshTypesState();
+            }
+            navigateTo('types');
+        } catch (err) {
+            showModal('Erro', 'Erro ao salvar no banco: ' + err.message);
+        } finally {
+            toggleLoading(false);
+        }
+    };
+}
+
+// Renderizar Aba de Tipos
+async function renderTypes() {
+    pageTitle.textContent = 'Tipos de Item';
+
+    toggleLoading(true);
+    try {
+        if (supabaseClient) {
+            await refreshTypesState();
+        }
+    } finally {
+        toggleLoading(false);
+    }
+
+    const container = document.createElement('div');
+    container.innerHTML = `
+        <div class="header-container">
+            <h1>Gerenciamento de Tipos</h1>
+            <button class="btn-primary" id="btn-add-type">Adicionar Tipo</button>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Nome</th>
+                        <th style="text-align: right;">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${state.types.map(type => `
+                        <tr>
+                            <td>${type.id}</td>
+                            <td>${type.name}</td>
+                            <td style="text-align: right;">
+                                <button class="btn-primary btn-sm btn-edit-type" data-id="${type.id}">Editar</button>
+                                <button class="btn-secondary btn-sm btn-del-type" data-id="${type.id}" style="background-color: #e74c3c;">Excluir</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                    ${state.types.length === 0 ? '<tr><td colspan="3" style="text-align: center;">Nenhum tipo cadastrado.</td></tr>' : ''}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    contentArea.innerHTML = '';
+    contentArea.appendChild(container);
+
+    document.getElementById('btn-add-type').onclick = () => navigateTo('type-form');
+
+    document.querySelectorAll('.btn-edit-type').forEach(btn => btn.onclick = (e) => {
+        navigateTo('type-form', e.target.dataset.id);
+    });
+
+    document.querySelectorAll('.btn-del-type').forEach(btn => {
+        btn.onclick = (e) => {
+            const id = e.target.dataset.id;
+            showModal('Excluir Tipo', 'Tem certeza que deseja excluir este tipo?', async () => {
+                if (supabaseClient) {
+                    // Tenta deletar usando a PK 'Id'
+                    let { error } = await supabaseClient.from('Tipo').delete().eq('Id', id);
+                    if (error) {
+                        error = (await supabaseClient.from('tipo').delete().eq('id', id)).error;
+                    }
+                    if (error) {
+                        showModal('Erro', 'Erro ao excluir do banco: ' + error.message);
+                        return;
+                    }
+                    await refreshTypesState();
+                }
+                renderTypes();
+            }, 'confirm');
+        };
+    });
+}
+
+function renderTypeForm(id = null) {
+    const isEdit = id !== null;
+    const type = isEdit ? state.types.find(t => t.id == id) : null;
+
+    pageTitle.textContent = isEdit ? 'Editar Tipo' : 'Novo Tipo';
+
+    const formContainer = document.createElement('div');
+    formContainer.innerHTML = `
+        <form id="type-form" class="form-card">
+            <h2>${isEdit ? 'Editar Tipo' : 'Cadastrar Novo Tipo'}</h2>
+            <div class="form-group">
+                <label for="type-name">Nome do Tipo</label>
+                <input type="text" id="type-name" name="typeName" value="${type ? type.name : ''}" required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn-secondary" id="btn-cancel">Cancelar</button>
+                <button type="submit" class="btn-primary">Salvar</button>
+            </div>
+        </form>
+    `;
+
+    contentArea.innerHTML = '';
+    contentArea.appendChild(formContainer);
+
+    document.getElementById('btn-cancel').onclick = () => navigateTo('types');
+    document.getElementById('type-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const typeName = e.target.typeName.value;
+        
+        toggleLoading(true);
+        try {
+            if (supabaseClient) {
+                const payload = { Name: typeName };
+                
+                if (isEdit) {
+                    // Atualização: eq('Id', id) e campo 'Name'
+                    let { error } = await supabaseClient.from('Tipo').update(payload).eq('Id', id);
+                    if (error) {
+                        error = (await supabaseClient.from('tipo').update({ name: typeName }).eq('id', id)).error;
+                    }
+                    if (error) throw error;
+                } else {
+                    // Inserção: campo 'Name'
+                    const { error } = await supabaseClient.from('Tipo').insert([payload]);
+                    if (error) throw error;
+                }
+                await refreshTypesState();
+            }
+            navigateTo('types');
+        } catch (err) {
+            showModal('Erro', 'Erro ao salvar no banco: ' + err.message);
+        } finally {
+            toggleLoading(false);
+        }
     };
 }
 
@@ -2690,6 +3010,12 @@ function navigateTo(route, param = null) {
             break;
         case 'metrics':
             renderMetrics();
+            break;
+        case 'types':
+            renderTypes();
+            break;
+        case 'type-form':
+            renderTypeForm(param);
             break;
         case 'client-form':
             renderClientForm(param);
@@ -2890,6 +3216,7 @@ async function refreshItemsState() {
         if (data) {
             const mappedItems = data.map(mapDatabaseItemToLocal);
             
+            await enrichItemsWithTypes(mappedItems); // Enrich with types
             // Enriquece itens com clientes da tabela de relacionamento
             await enrichItemsWithClients(mappedItems);
             
@@ -2908,6 +3235,7 @@ async function enrichItemsWithClients(items) {
     
     try {
         const itemIds = items.map(item => item.id);
+        // This function needs to be updated in clientesAPI.js to query ItemCliente
         const { itemsMap } = await ClientesAPI.buscarItensComClientes(supabaseClient, itemIds);
         
         console.log('Enriching items with clients:', { itemIds, itemsMap });
@@ -2918,15 +3246,7 @@ async function enrichItemsWithClients(items) {
                 clientId: item.clientId,
                 foundClients: itemsMap[item.id]
             });
-            
-            if (itemsMap[item.id] && itemsMap[item.id].length > 0) {
-                item.clientIds = itemsMap[item.id];
-                console.log(`Item ${item.id} clientes atualizados:`, item.clientIds);
-            } else if (!item.clientIds || item.clientIds.length === 0) {
-                // Fallback para IdCliente único se não houver relacionamentos
-                item.clientIds = item.clientId ? [item.clientId] : [];
-                console.log(`Item ${item.id} usando fallback clientId:`, item.clientIds);
-            }
+            item.clientIds = itemsMap[item.id] || [];
         });
     } catch (error) {
         console.error('Erro ao enriquecer itens com clientes:', error);

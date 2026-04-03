@@ -8,9 +8,6 @@ Este banco de dados é composto por quatro tabelas principais:
 * **Cliente** → Cadastro de clientes
 * **Usuario** → Autenticação de usuários
 * **Item** → Registros vinculados a versões e clientes
-* **ItemCliente** → Relacionamento N:N entre Item e Cliente
-* **ItemTipo** → Relacionamento N:N entre Item e Tipo
-* **Tipo** → Categorias/Tipos de itens (ex: Backend, Frontend)
 
 ---
 
@@ -41,47 +38,6 @@ Armazena os dados dos clientes.
 
 ---
 
-## 🧩 Tabela: Tipo
-
-Armazena as categorias de tipos que podem ser atribuídas a um item.
-
-| Campo | Tipo    | Obrigatório | Descrição                |
-| ----- | ------- | ----------- | ------------------------ |
-| Id    | BIGINT  | ✅           | Identificador único (PK) |
-| Name  | VARCHAR | ✅           | Nome do tipo             |
-
----
-
-## 🧩 Tabela: ItemCliente
-
-Tabela de junção para o relacionamento N:N entre `Item` e `Cliente`.
-
-| Campo     | Tipo   | Obrigatório | Descrição                |
-| --------- | ------ | ----------- | ------------------------ |
-| IdItem    | BIGINT | ✅           | FK para Item (PK parte)  |
-| IdCliente | BIGINT | ✅           | FK para Cliente (PK parte) |
-
-### 🔗 Relacionamentos
-* **IdItem → Item(Id)** ON DELETE: CASCADE
-* **IdCliente → Cliente(Id)** ON DELETE: CASCADE
-
----
-
-## 🧩 Tabela: ItemTipo
-
-Tabela de junção para o relacionamento N:N entre `Item` e `Tipo`.
-
-| Campo  | Tipo   | Obrigatório | Descrição                |
-| ------ | ------ | ----------- | ------------------------ |
-| IdItem | BIGINT | ✅           | FK para Item (PK parte)  |
-| IdTipo | BIGINT | ✅           | FK para Tipo (PK parte)  |
-
-### 🔗 Relacionamentos
-* **IdItem → Item(Id)** ON DELETE: CASCADE
-* **IdTipo → Tipo(Id)** ON DELETE: CASCADE
-
----
-
 ## 🧩 Tabela: Usuario
 
 Responsável pela autenticação dos usuários.
@@ -109,7 +65,8 @@ Tabela principal que relaciona versões e clientes.
 | Descricao  | TEXT        | ❌           | Descrição do item                 |
 | Url        | TEXT        | ❌           | Link relacionado                  |
 | Numero     | TEXT        | ❌           | Número identificador              |
-| IdVersao   | BIGINT      | ❌           | FK para Versao                    |
+| IdVersao   | INT8        | ❌           | FK para Versao                    |
+| IdCliente  | INT8        | ❌           | FK para Cliente                   |
 | Data       | TIMESTAMPTZ | ❌           | Data de criação (default: NOW)    |
 | DataEdicao | TIMESTAMPTZ | ❌           | Data de edição                    |
 | Migration  | BOOLEAN     | ❌           | Flag de migração (default: false) |
@@ -121,6 +78,7 @@ Tabela principal que relaciona versões e clientes.
   * ON DELETE: SET NULL
 
 * **IdCliente → Cliente(Id)**
+
   * ON DELETE: SET NULL
 
 ---
