@@ -338,6 +338,13 @@ async function renderVersions() {
         });
 
         // Renderiza versões filtradas
+        // Calcula numeração decrescente para versões finalizadas (mais recente = #1)
+        const completedVersions = state.versions.filter(v => v.status === 1);
+        const versionNumbers = {};
+        completedVersions.forEach((version, index) => {
+            versionNumbers[version.id] = completedVersions.length - index;
+        });
+
         filteredVersions.forEach(version => {
             const card = document.createElement('div');
             card.className = 'version-card';
@@ -345,9 +352,10 @@ async function renderVersions() {
             card.onclick = () => renderVersionDetail(version.id);
             
             const statusInfo = getStatusInfo(version.status);
+            const versionNumber = version.status === 1 ? versionNumbers[version.id] : null;
 
             card.innerHTML = `
-                <h3>${version.name}</h3>
+                <h3>${versionNumber ? `<span style="color: #28a745; font-weight: bold;">#${versionNumber}</span> ` : ''}${version.name}</h3>
                 <span style="display:block; margin-bottom: 10px;">Lançamento: ${formatDateToBR(version.date)}</span>
                 <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
             `;
@@ -1287,7 +1295,7 @@ function createPeriodMetricsCard(periodMetrics) {
     card.className = 'metrics-card';
     
     card.innerHTML = `
-        <h2>📅 Métricas por Período</h2>
+        <h2>📅 Versões por Período</h2>
         <div class="period-metrics-grid">
             ${periodMetrics.slice(0, 6).map(period => `
                 <div class="period-card">
@@ -1674,6 +1682,7 @@ function renderReportView(versionId) {
                 <button class="btn-primary" id="btn-copy-report">📋 Copiar Texto</button>
                 <button class="btn-secondary" id="btn-download-report">💾 Baixar como Arquivo</button>
                 <button class="btn-secondary" id="btn-download-pdf" style="background-color: #dc3545;">📄 Baixar PDF</button>
+                <button class="btn-secondary" id="btn-download-pdf-client" style="background-color: #28a745;">👥 PDF por Cliente</button>
             </div>
 
             <!-- Informações -->
@@ -1684,9 +1693,10 @@ function renderReportView(versionId) {
                     <div><strong>📱 WhatsApp:</strong> Formato com *itálico* e bullets simples</div>
                     <div><strong>📝 Markdown:</strong> Formato com ## cabeçalhos e ### subseções</div>
                     <div><strong>📄 PDF:</strong> Documento formatado para impressão/envio</div>
+                    <div><strong>👥 PDF por Cliente:</strong> PDFs individuais para cada cliente</div>
                 </div>
                 <div style="margin-top: 10px; font-size: 0.85rem; color: #6c757d;">
-                    <strong>💡 Dica:</strong> O PDF é ideal para documentação oficial e compartilhamento profissional.
+                    <strong>💡 Dicas:</strong> PDF único para documentação completa. PDF por cliente ideal para envios individuais e personalizados.
                 </div>
             </div>
         </div>
@@ -1844,6 +1854,134 @@ function renderReportView(versionId) {
         } catch (error) {
             console.error('Erro ao gerar PDF:', error);
             showModal('Erro', 'Não foi possível gerar o PDF. Tente novamente.');
+        }
+    };
+
+    // Gerar PDF por cliente
+    document.getElementById('btn-download-pdf-client').onclick = () => {
+        try {
+            // Verifica se jsPDF está disponível
+            if (typeof window.jspdf === 'undefined') {
+                showModal('Erro', 'Biblioteca PDF não carregada. Recarregue a página e tente novamente.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            
+            // Gera PDF para cada cliente
+            sortedClients.forEach((client, index) => {
+                const clientItems = itemsByClient[client];
+                
+                // Cria novo documento para cada cliente
+                const doc = new jsPDF();
+                
+                // Configurações do documento
+                const pageWidth = doc.internal.pageSize.getWidth();
+                const pageHeight = doc.internal.pageSize.getHeight();
+                const margin = 20;
+                const lineHeight = 7;
+                let yPosition = margin;
+                
+                // Adiciona cabeçalho personalizado
+                doc.setFontSize(18);
+                doc.setFont(undefined, 'bold');
+                doc.text(`Relato: ${version.name}`, margin, yPosition);
+                yPosition += 12;
+                
+                doc.setFontSize(14);
+                doc.setFont(undefined, 'bold');
+                doc.text(`Cliente: ${client}`, margin, yPosition);
+                yPosition += 10;
+                
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'normal');
+                doc.text(`Versão: ${version.name}`, margin, yPosition);
+                yPosition += lineHeight;
+                doc.text(`Lançamento: ${version.date}`, margin, yPosition);
+                doc.text(`Itens deste cliente: ${clientItems.length}`, margin, yPosition + lineHeight);
+                yPosition += lineHeight * 3;
+                
+                // Adiciona linha separadora
+                doc.setDrawColor(200, 200, 200);
+                doc.line(margin, yPosition, pageWidth - margin, yPosition);
+                yPosition += 10;
+                
+                // Adiciona título dos itens
+                doc.setFontSize(14);
+                doc.setFont(undefined, 'bold');
+                doc.text('Itens Implementados:', margin, yPosition);
+                yPosition += 12;
+                
+                // Adiciona itens do cliente
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'normal');
+                clientItems.forEach((item, itemIndex) => {
+                    // Verifica se precisa de nova página
+                    if (yPosition > pageHeight - 40) {
+                        doc.addPage();
+                        yPosition = margin;
+                    }
+                    
+                    const itemText = `${itemIndex + 1}. ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
+                    
+                    lines.forEach(line => {
+                        doc.text(line, margin + 5, yPosition);
+                        yPosition += lineHeight;
+                    });
+                    
+                    yPosition += 3; // Espaço entre itens
+                });
+                
+                // Adiciona seção de estatísticas
+                if (yPosition > pageHeight - 60) {
+                    doc.addPage();
+                    yPosition = margin;
+                }
+                
+                yPosition += 10;
+                doc.setFontSize(12);
+                doc.setFont(undefined, 'bold');
+                doc.text('Estatísticas desta Versão:', margin, yPosition);
+                yPosition += 10;
+                
+                doc.setFont(undefined, 'normal');
+                doc.setFontSize(10);
+                
+                // Calcula estatísticas
+                const totalItems = versionItems.length;
+                const migrationItems = clientItems.filter(item => item.migration).length;
+                
+                doc.text(`• Total de itens na versão: ${totalItems}`, margin + 5, yPosition);
+                yPosition += lineHeight;
+               
+                // Adiciona informações de contato
+                yPosition += 10;
+                doc.setFont(undefined, 'italic');
+                doc.text('Gerado por Version Reporter', margin, yPosition);
+                yPosition += lineHeight;
+                doc.text(`Data: ${new Date().toLocaleDateString('pt-BR')}`, margin, yPosition);
+                
+                // Adiciona rodapé
+                const totalPages = doc.internal.getNumberOfPages();
+                for (let i = 1; i <= totalPages; i++) {
+                    doc.setPage(i);
+                    doc.setFontSize(8);
+                    doc.setFont(undefined, 'italic');
+                    doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin - 20, pageHeight - 10);
+                    doc.text(`Confidencial - ${client}`, margin, pageHeight - 10);
+                }
+                
+                // Salva o PDF individual
+                const fileName = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}-${client.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+                doc.save(fileName);
+            });
+            
+            showModal('Sucesso', `${sortedClients.length} PDF(s) gerado(s) com sucesso! Cada cliente recebeu seu arquivo individual.`);
+            
+        } catch (error) {
+            console.error('Erro ao gerar PDFs por cliente:', error);
+            showModal('Erro', 'Não foi possível gerar os PDFs. Tente novamente.');
         }
     };
 }
