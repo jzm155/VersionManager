@@ -712,6 +712,23 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
                     </div>
                 </div>
                 <div class="form-group">
+                    <label>Tipos (selecione um ou mais)</label>
+                    <div style="max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                        <div class="checkbox-label" style="margin-bottom: 8px;">
+                            <input type="checkbox" id="item-type-back" name="types" value="back">
+                            <label for="item-type-back" style="font-weight: normal;">Backend</label>
+                        </div>
+                        <div class="checkbox-label" style="margin-bottom: 8px;">
+                            <input type="checkbox" id="item-type-front" name="types" value="front">
+                            <label for="item-type-front" style="font-weight: normal;">Frontend</label>
+                        </div>
+                        <div class="checkbox-label" style="margin-bottom: 8px;">
+                            <input type="checkbox" id="item-type-banco" name="types" value="banco">
+                            <label for="item-type-banco" style="font-weight: normal;">Banco de Dados</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="modal-item-migration" ${item && item.migration ? 'checked' : ''}>
                         Requer migração de banco de dados?
@@ -737,6 +754,10 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
         const selectedClients = Array.from(document.querySelectorAll('input[name="clients"]:checked'))
             .map(checkbox => parseInt(checkbox.value));
         
+        // Coleta múltiplos tipos selecionados
+        const selectedTypes = Array.from(document.querySelectorAll('input[name="types"]:checked'))
+            .map(checkbox => checkbox.value);
+        
         if (selectedClients.length === 0) {
             showModal('Erro', 'Selecione pelo menos um cliente.');
             return;
@@ -751,6 +772,11 @@ async function openItemModal(item = null, versionId = null, onSuccess = null) {
             IdCliente: selectedClients.length > 0 ? selectedClients[0] : null, // Usa apenas o primeiro por enquanto
             IdVersao: versionId // VINCULA AUTOMATICAMENTE SE FOR PASSADO
         };
+        
+        // Adiciona Tipos apenas se a coluna existir (para evitar erro)
+        if (selectedTypes.length > 0) {
+            payload.Tipos = JSON.stringify(selectedTypes);
+        }
         
         // Armazena múltiplos clientes no localStorage para exibição
         const itemClientIds = selectedClients;
@@ -1979,6 +2005,17 @@ async function renderItemForm(id = null) {
         console.log('Usando clientIds do item local (form):', itemClientIds);
     }
 
+    // Se for edição, busca os tipos do item
+    let itemTypes = [];
+    if (isEdit && item && item.tipos) {
+        try {
+            itemTypes = typeof item.tipos === 'string' ? JSON.parse(item.tipos) : item.tipos;
+        } catch (e) {
+            console.warn('Erro ao parsear tipos do item:', e);
+            itemTypes = [];
+        }
+    }
+
     // Gera checkboxes para clientes
     const clientCheckboxes = state.clients
         .filter(c => c.active)
@@ -1991,6 +2028,21 @@ async function renderItemForm(id = null) {
                 </div>
             `;
         }).join('');
+
+    // Gera checkboxes para tipos
+    const typeCheckboxes = [
+        { id: 'item-type-back', value: 'back', label: 'Backend' },
+        { id: 'item-type-front', value: 'front', label: 'Frontend' },
+        { id: 'item-type-banco', value: 'banco', label: 'Banco de Dados' }
+    ].map(type => {
+        const isChecked = itemTypes.includes(type.value) ? 'checked' : '';
+        return `
+            <div class="checkbox-label" style="margin-bottom: 8px;">
+                <input type="checkbox" id="${type.id}" name="types" value="${type.value}" ${isChecked}>
+                <label for="${type.id}" style="font-weight: normal;">${type.label}</label>
+            </div>
+        `;
+    }).join('');
 
     const formContainer = document.createElement('div');
     formContainer.innerHTML = `
@@ -2019,6 +2071,12 @@ async function renderItemForm(id = null) {
                 </div>
             </div>
             <div class="form-group">
+                <label>Tipos (selecione um ou mais)</label>
+                <div style="max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
+                    ${typeCheckboxes}
+                </div>
+            </div>
+            <div class="form-group">
                 <label class="checkbox-label">
                     <input type="checkbox" id="item-migration" name="itemMigration" ${item && item.migration ? 'checked' : ''}>
                     Requer migração de banco de dados?
@@ -2043,6 +2101,10 @@ async function renderItemForm(id = null) {
         const selectedClients = Array.from(form.querySelectorAll('input[name="clients"]:checked'))
             .map(checkbox => parseInt(checkbox.value));
         
+        // Coleta múltiplos tipos selecionados
+        const selectedTypes = Array.from(form.querySelectorAll('input[name="types"]:checked'))
+            .map(checkbox => checkbox.value);
+        
         if (selectedClients.length === 0) {
             showModal('Erro', 'Selecione pelo menos um cliente.');
             return;
@@ -2056,6 +2118,11 @@ async function renderItemForm(id = null) {
             Migration: form.itemMigration.checked,
             IdCliente: selectedClients.length > 0 ? selectedClients[0] : null // Usa apenas o primeiro por enquanto
         };
+        
+        // Adiciona Tipos apenas se a coluna existir (para evitar erro)
+        if (selectedTypes.length > 0) {
+            payload.Tipos = JSON.stringify(selectedTypes);
+        }
 
         if (supabaseClient) {
             let error = null;
@@ -2294,6 +2361,19 @@ function mapDatabaseItemToLocal(row) {
         clientIds = [row.IdCliente];
     }
     
+    // Processa tipos: tenta JSON
+    let tipos = [];
+    if (row.Tipos || row.tipos) {
+        try {
+            tipos = typeof (row.Tipos || row.tipos) === 'string' 
+                ? JSON.parse(row.Tipos || row.tipos) 
+                : (row.Tipos || row.tipos);
+        } catch (e) {
+            console.warn('Erro ao parsear tipos do item:', e);
+            tipos = [];
+        }
+    }
+    
     return {
         id: row.Id || row.id,
         ticket: row.Numero || row.numero || '',
@@ -2301,6 +2381,7 @@ function mapDatabaseItemToLocal(row) {
         date: (row.Data || row.data || '').split('T')[0],
         url: row.Url || row.url || '',
         migration: row.Migration || row.migration,
+        tipos: tipos, // Array de tipos: ["back", "front", "banco"]
         clientId: row.IdCliente || row.clienteid,
         clientIds: clientIds, // Array de IDs de clientes
         versionId: row.IdVersao || row.versaoid
