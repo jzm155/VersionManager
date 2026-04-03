@@ -1408,10 +1408,12 @@ async function renderMetrics() {
         
         const { versions, items, clients, itemClients } = metricsData;
         
-        // Processa os dados
-        const periodMetrics = processPeriodMetrics(versions, items);
-        const trends = processTrends(versions);
-        const clientMetrics = processClientMetrics(items, clients, itemClients);
+        // Extrai anos disponíveis das versões
+        const availableYears = [...new Set(
+            versions
+                .filter(v => v.DataPublicacao || v.datapublicacao)
+                .map(v => new Date(v.DataPublicacao || v.datapublicacao).getFullYear())
+        )].sort((a, b) => b - a); // Mais recente primeiro
         
         // Container principal
         const container = document.createElement('div');
@@ -1422,26 +1424,121 @@ async function renderMetrics() {
         headerContainer.className = 'header-container';
         headerContainer.innerHTML = '<h1>Dashboard de Métricas</h1>';
         
+        // Container de filtros
+        const filtersContainer = document.createElement('div');
+        filtersContainer.className = 'filters-container';
+        filtersContainer.style.marginBottom = '25px';
+        
+        // Gera opções de anos
+        const yearOptions = ['<option value="">Todos os anos</option>']
+            .concat(availableYears.map(year => 
+                `<option value="${year}">${year}</option>`
+            ));
+        
+        filtersContainer.innerHTML = `
+            <div class="filters-row">
+                <div class="filter-group">
+                    <label for="metrics-filter-year">Ano:</label>
+                    <select id="metrics-filter-year">
+                        ${yearOptions.join('')}
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <button class="btn-secondary" id="btn-clear-metrics-filters">Limpar Filtros</button>
+                </div>
+            </div>
+        `;
+        
+        // Função para filtrar e renderizar métricas
+        function renderFilteredMetrics() {
+            const yearFilter = document.getElementById('metrics-filter-year').value;
+            
+            // Filtra versões por ano
+            const filteredVersions = yearFilter 
+                ? versions.filter(v => {
+                    const date = v.DataPublicacao || v.datapublicacao;
+                    return date && new Date(date).getFullYear() === parseInt(yearFilter);
+                })
+                : versions;
+            
+            // Filtra itens por ano (baseado na data do item)
+            const filteredItems = yearFilter
+                ? items.filter(i => {
+                    const date = i.Data || i.data;
+                    return date && new Date(date).getFullYear() === parseInt(yearFilter);
+                })
+                : items;
+            
+            // Processa os dados filtrados
+            const periodMetrics = processPeriodMetrics(filteredVersions, filteredItems);
+            const trends = processTrends(filteredVersions);
+            const clientMetrics = processClientMetrics(filteredItems, clients, itemClients);
+            
+            // Limpa conteúdo existente (exceto header e filtros)
+            const existingCards = container.querySelectorAll('.metrics-card');
+            existingCards.forEach(card => card.remove());
+            
+            // Adiciona cards de métricas
+            if (periodMetrics.length > 0) {
+                container.appendChild(createPeriodMetricsCard(periodMetrics));
+            }
+            
+            if (clientMetrics.length > 0) {
+                container.appendChild(createClientMetricsCard(clientMetrics));
+            }
+            
+            if (trends.length > 0) {
+                container.appendChild(createTrendsCard(trends));
+            }
+            
+            if (periodMetrics.length === 0 && trends.length === 0 && clientMetrics.length === 0) {
+                const noDataMessage = document.createElement('div');
+                noDataMessage.style.cssText = 'text-align: center; padding: 40px; color: #666;';
+                noDataMessage.textContent = yearFilter 
+                    ? `Nenhuma métrica encontrada para o ano ${yearFilter}.`
+                    : 'Nenhuma métrica disponível. Adicione versões com datas de publicação ou itens vinculados a clientes.';
+                container.appendChild(noDataMessage);
+            }
+            
+            // Atualiza contador de resultados
+            const resultCount = document.getElementById('metrics-result-count');
+            if (resultCount) {
+                const totalItems = periodMetrics.reduce((sum, p) => sum + p.totalItems, 0);
+                const completedVersions = yearFilter 
+                    ? filteredVersions.filter(v => (v.Status || v.status) === 1).length
+                    : versions.filter(v => (v.Status || v.status) === 1).length;
+                
+                resultCount.textContent = yearFilter 
+                    ? `${completedVersions} versão(ões) finalizada(s) e ${totalItems} item(ns) em ${yearFilter}`
+                    : `${completedVersions} versão(ões) finalizada(s) e ${items.length} item(ns) no total`;
+            }
+        }
+        
         // Limpa e adiciona conteúdo
         contentArea.innerHTML = '';
         contentArea.appendChild(headerContainer);
+        contentArea.appendChild(filtersContainer);
         
-        // Adiciona cards de métricas
-        if (periodMetrics.length > 0) {
-            contentArea.appendChild(createPeriodMetricsCard(periodMetrics));
-        }
+        // Adiciona contador de resultados
+        const resultCount = document.createElement('div');
+        resultCount.id = 'metrics-result-count';
+        resultCount.style.cssText = 'margin: 10px 0; font-weight: 600; color: #666; background-color: #f8f9fa; padding: 8px 12px; border-radius: 4px; border-left: 4px solid #3498db;';
+        const completedVersions = versions.filter(v => (v.Status || v.status) === 1).length;
+        resultCount.textContent = `${completedVersions} versão(ões) finalizada(s) e ${items.length} item(ns) no total`;
+        contentArea.appendChild(resultCount);
         
-        if (clientMetrics.length > 0) {
-            contentArea.appendChild(createClientMetricsCard(clientMetrics));
-        }
+        contentArea.appendChild(container);
         
-        if (trends.length > 0) {
-            contentArea.appendChild(createTrendsCard(trends));
-        }
+        // Adiciona eventos dos filtros
+        document.getElementById('metrics-filter-year').addEventListener('change', renderFilteredMetrics);
         
-        if (periodMetrics.length === 0 && trends.length === 0 && clientMetrics.length === 0) {
-            contentArea.innerHTML += '<div style="text-align: center; padding: 40px; color: #666;">Nenhuma métrica disponível. Adicione versões com datas de publicação ou itens vinculados a clientes.</div>';
-        }
+        document.getElementById('btn-clear-metrics-filters').addEventListener('click', () => {
+            document.getElementById('metrics-filter-year').value = '';
+            renderFilteredMetrics();
+        });
+        
+        // Renderiza inicialmente
+        renderFilteredMetrics();
         
     } catch (error) {
         console.error('Erro ao renderizar métricas:', error);

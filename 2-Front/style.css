@@ -647,6 +647,19 @@ button:disabled {
     width: 100%;
 }
 
+/* Estilos específicos para filtros de métricas */
+#metrics-filter-year {
+    min-width: 120px;
+}
+
+/* Contador de resultados de métricas */
+#metrics-result-count {
+    background-color: #f8f9fa;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border-left: 4px solid #3498db;
+}
+
 .metrics-card {
     background-color: white;
     border-radius: 8px;
