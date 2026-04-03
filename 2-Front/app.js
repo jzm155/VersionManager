@@ -1673,15 +1673,20 @@ function renderReportView(versionId) {
             <div class="form-actions">
                 <button class="btn-primary" id="btn-copy-report">📋 Copiar Texto</button>
                 <button class="btn-secondary" id="btn-download-report">💾 Baixar como Arquivo</button>
+                <button class="btn-secondary" id="btn-download-pdf" style="background-color: #dc3545;">📄 Baixar PDF</button>
             </div>
 
             <!-- Informações -->
             <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 5px; border-left: 4px solid #3498db;">
-                <h4 style="margin: 0 0 10px 0; color: #495057;">📋 Formatos Disponíveis:</h4>
+                <h4 style="margin: 0 0 10px 0; color: #495057;">📋 Formatos e Opções de Download:</h4>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.9rem;">
                     <div><strong>💬 Discord:</strong> Formato com **negrito** e @everyone</div>
                     <div><strong>📱 WhatsApp:</strong> Formato com *itálico* e bullets simples</div>
                     <div><strong>📝 Markdown:</strong> Formato com ## cabeçalhos e ### subseções</div>
+                    <div><strong>📄 PDF:</strong> Documento formatado para impressão/envio</div>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85rem; color: #6c757d;">
+                    <strong>💡 Dica:</strong> O PDF é ideal para documentação oficial e compartilhamento profissional.
                 </div>
             </div>
         </div>
@@ -1740,6 +1745,106 @@ function renderReportView(versionId) {
         window.URL.revokeObjectURL(url);
         
         showModal('Sucesso', 'Arquivo baixado com sucesso!');
+    };
+
+    // Baixar como PDF
+    document.getElementById('btn-download-pdf').onclick = () => {
+        try {
+            // Verifica se jsPDF está disponível
+            if (typeof window.jspdf === 'undefined') {
+                showModal('Erro', 'Biblioteca PDF não carregada. Recarregue a página e tente novamente.');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            // Configurações do documento
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const margin = 20;
+            const lineHeight = 7;
+            let yPosition = margin;
+            
+            // Adiciona título principal
+            doc.setFontSize(20);
+            doc.setFont(undefined, 'bold');
+            doc.text(`Relato: ${version.name}`, margin, yPosition);
+            yPosition += 15;
+            
+            // Adiciona informações da versão
+            doc.setFontSize(12);
+            doc.setFont(undefined, 'normal');
+            doc.text(`Versão: ${version.name}`, margin, yPosition);
+            yPosition += lineHeight;
+            doc.text(`Lançamento: ${version.date}`, margin, yPosition);
+            doc.text(`Total de itens: ${versionItems.length}`, margin, yPosition + lineHeight);
+            yPosition += lineHeight * 3;
+            
+            // Adiciona linha separadora
+            doc.setDrawColor(200, 200, 200);
+            doc.line(margin, yPosition, pageWidth - margin, yPosition);
+            yPosition += 10;
+            
+            // Adiciona itens por cliente
+            doc.setFontSize(14);
+            doc.setFont(undefined, 'bold');
+            doc.text('Itens por Cliente:', margin, yPosition);
+            yPosition += 12;
+            
+            sortedClients.forEach((client, index) => {
+                // Verifica se precisa de nova página
+                if (yPosition > pageHeight - 40) {
+                    doc.addPage();
+                    yPosition = margin;
+                }
+                
+                // Nome do cliente
+                doc.setFontSize(12);
+                doc.setFont(undefined, 'bold');
+                doc.text(client, margin, yPosition);
+                yPosition += lineHeight;
+                
+                // Itens do cliente
+                doc.setFont(undefined, 'normal');
+                itemsByClient[client].forEach(item => {
+                    if (yPosition > pageHeight - 25) {
+                        doc.addPage();
+                        yPosition = margin;
+                    }
+                    
+                    const itemText = `• ${item.name}${item.migration ? ' (migrations)' : ''}`;
+                    const lines = doc.splitTextToSize(itemText, pageWidth - margin * 2);
+                    
+                    lines.forEach(line => {
+                        doc.text(line, margin + 5, yPosition);
+                        yPosition += lineHeight;
+                    });
+                });
+                
+                yPosition += 5; // Espaço entre clientes
+            });
+            
+            // Adiciona rodapé
+            const totalPages = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= totalPages; i++) {
+                doc.setPage(i);
+                doc.setFontSize(8);
+                doc.setFont(undefined, 'italic');
+                doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin - 20, pageHeight - 10);
+                doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`, margin, pageHeight - 10);
+            }
+            
+            // Salva o PDF
+            const fileName = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+            doc.save(fileName);
+            
+            showModal('Sucesso', 'PDF gerado e baixado com sucesso!');
+            
+        } catch (error) {
+            console.error('Erro ao gerar PDF:', error);
+            showModal('Erro', 'Não foi possível gerar o PDF. Tente novamente.');
+        }
     };
 }
 
