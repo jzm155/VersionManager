@@ -1574,15 +1574,12 @@ async function renderMetrics() {
     }
 }
 
-// Nova funcionalidade: Gerar Relato
+// Nova funcionalidade: Gerar Relato com múltiplos formatos
 function renderReportView(versionId) {
     const version = state.versions.find(v => v.id === versionId);
     const versionItems = state.items.filter(i => i.versionId === versionId);
     
     pageTitle.textContent = `Relato: ${version.name}`;
-    
-    // Formato solicitado: **{Numero}** Versao - Lancamento {{Data}}
-    const header = `**${version.name}** Versao - Lancamento ${version.date}  @everyone`;
     
     // Agrupa itens por cliente
     const itemsByClient = {};
@@ -1598,32 +1595,94 @@ function renderReportView(versionId) {
         itemsByClient[clientName].push(item);
     });
 
-    let itemsList = '';
     const sortedClients = Object.keys(itemsByClient).sort((a, b) => {
         if (a === 'Outros') return 1;
         if (b === 'Outros') return -1;
         return a.localeCompare(b);
     });
 
-    sortedClients.forEach(client => {
-        itemsList += `**${client}**\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
-    });
+    // Gera conteúdo base por cliente
+    const generateItemsContent = (formatItem) => {
+        let content = '';
+        sortedClients.forEach(client => {
+            if (formatItem === 'discord') {
+                content += `**${client}**\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
+            } else if (formatItem === 'whatsapp') {
+                content += `*${client}*\n` + itemsByClient[client].map(item => `• ${item.name}${item.migration ? ' (migrations)' : ''}`).join('\n') + '\n\n';
+            } else if (formatItem === 'markdown') {
+                content += `### ${client}\n` + itemsByClient[client].map(item => `- ${item.name}${item.migration ? ' *(migrations)*' : ''}`).join('\n') + '\n\n';
+            }
+        });
+        return content.trim();
+    };
 
-    const fullText = `${header}\n\n${itemsList.trim()}`;
+    // Formatos disponíveis
+    const formats = {
+        discord: {
+            name: 'Discord',
+            icon: '💬',
+            header: `**${version.name}** Versao - Lancamento ${version.date}  @everyone`,
+            content: generateItemsContent('discord')
+        },
+        whatsapp: {
+            name: 'WhatsApp',
+            icon: '📱',
+            header: `*${version.name}* Versao - Lancamento ${version.date}`,
+            content: generateItemsContent('whatsapp')
+        },
+        markdown: {
+            name: 'Markdown',
+            icon: '📝',
+            header: `## ${version.name} - Versao\n\n**Lancamento:** ${version.date}`,
+            content: generateItemsContent('markdown')
+        }
+    };
 
+    // Container principal
     const container = document.createElement('div');
     container.innerHTML = `
         <div class="header-container">
             <button class="btn-secondary" id="btn-back-report">&larr; Voltar para Detalhes</button>
         </div>
-        <div class="form-card" style="max-width: 800px; margin-top: 20px;">
-            <h2>Pré-visualização do Relato</h2>
+        <div class="form-card" style="max-width: 900px; margin-top: 20px;">
+            <h2>Gerar Relato - ${version.name}</h2>
+            
+            <!-- Seleção de formato -->
             <div class="form-group">
-                <label for="report-text">Texto Formatado (Markdown)</label>
-                <textarea id="report-text" style="width: 100%; height: 300px; padding: 15px; font-family: monospace; border: 1px solid #ced4da; border-radius: 5px;">${fullText}</textarea>
+                <label>Escolha o formato do relato:</label>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    ${Object.entries(formats).map(([key, format]) => `
+                        <button class="btn-format ${key === 'discord' ? 'btn-primary' : 'btn-secondary'}" 
+                                data-format="${key}" 
+                                style="flex: 1;">
+                            ${format.icon} ${format.name}
+                        </button>
+                    `).join('')}
+                </div>
             </div>
+
+            <!-- Pré-visualização -->
+            <div class="form-group">
+                <label for="report-text">Pré-visualização <span id="format-label" style="color: #666;">(Discord)</span></label>
+                <textarea id="report-text" 
+                          style="width: 100%; height: 350px; padding: 15px; font-family: monospace; border: 1px solid #ced4da; border-radius: 5px; resize: vertical;"
+                          readonly>${formats.discord.header}\n\n${formats.discord.content}</textarea>
+            </div>
+
+            <!-- Ações -->
             <div class="form-actions">
-                <button class="btn-primary" id="btn-copy-report">Copiar Texto</button>
+                <button class="btn-primary" id="btn-copy-report">📋 Copiar Texto</button>
+                <button class="btn-secondary" id="btn-download-report">💾 Baixar como Arquivo</button>
+            </div>
+
+            <!-- Informações -->
+            <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 5px; border-left: 4px solid #3498db;">
+                <h4 style="margin: 0 0 10px 0; color: #495057;">📋 Formatos Disponíveis:</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.9rem;">
+                    <div><strong>💬 Discord:</strong> Formato com **negrito** e @everyone</div>
+                    <div><strong>📱 WhatsApp:</strong> Formato com *itálico* e bullets simples</div>
+                    <div><strong>📝 Markdown:</strong> Formato com ## cabeçalhos e ### subseções</div>
+                </div>
             </div>
         </div>
     `;
@@ -1631,13 +1690,56 @@ function renderReportView(versionId) {
     contentArea.innerHTML = '';
     contentArea.appendChild(container);
 
+    // Eventos
     document.getElementById('btn-back-report').onclick = () => renderVersionDetail(versionId);
+
+    // Mudança de formato
+    document.querySelectorAll('.btn-format').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const formatKey = e.target.dataset.format;
+            const format = formats[formatKey];
+            
+            // Atualiza botões
+            document.querySelectorAll('.btn-format').forEach(b => {
+                b.classList.remove('btn-primary');
+                b.classList.add('btn-secondary');
+            });
+            e.target.classList.remove('btn-secondary');
+            e.target.classList.add('btn-primary');
+            
+            // Atualiza label e conteúdo
+            document.getElementById('format-label').textContent = `(${format.name})`;
+            document.getElementById('report-text').value = `${format.header}\n\n${format.content}`;
+        });
+    });
+
+    // Copiar texto
     document.getElementById('btn-copy-report').onclick = () => {
         const textarea = document.getElementById('report-text');
         textarea.select();
         navigator.clipboard.writeText(textarea.value)
             .then(() => showModal('Sucesso', 'Relato copiado para a área de transferência!'))
             .catch(() => showModal('Erro', 'Erro ao copiar. Por favor, tente manualmente.'));
+    };
+
+    // Baixar como arquivo
+    document.getElementById('btn-download-report').onclick = () => {
+        const activeFormat = document.querySelector('.btn-format.btn-primary').dataset.format;
+        const format = formats[activeFormat];
+        const content = `${format.header}\n\n${format.content}`;
+        
+        // Cria blob e download
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `relato-${version.name.replace(/[^a-zA-Z0-9]/g, '-')}-${activeFormat}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        showModal('Sucesso', 'Arquivo baixado com sucesso!');
     };
 }
 
