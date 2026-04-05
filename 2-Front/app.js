@@ -3229,6 +3229,36 @@ async function refreshItemsState() {
     }
 }
 
+// Helper para enriquecer itens com tipos da tabela de relacionamento
+async function enrichItemsWithTypes(items) {
+    if (!supabaseClient || !items || items.length === 0) return items;
+    
+    try {
+        const itemIds = items.map(item => item.id);
+        
+        // Tenta buscar em lote se o método existir no TiposAPI, caso contrário busca individualmente
+        if (typeof TiposAPI !== 'undefined' && TiposAPI.buscarItensComTipos) {
+            const { itemsMap } = await TiposAPI.buscarItensComTipos(supabaseClient, itemIds);
+            items.forEach(item => {
+                item.tipos = itemsMap[item.id] || [];
+            });
+        } else if (typeof TiposAPI !== 'undefined' && TiposAPI.buscarTiposItem) {
+            // Fallback: busca os tipos de cada item em paralelo
+            const promises = items.map(async (item) => {
+                const result = await TiposAPI.buscarTiposItem(supabaseClient, item.id);
+                if (result.success) {
+                    item.tipos = result.typeNames;
+                }
+            });
+            await Promise.all(promises);
+        }
+    } catch (error) {
+        console.error('Erro ao enriquecer itens com tipos:', error);
+    }
+    
+    return items;
+}
+
 // Helper para enriquecer itens com clientes da tabela de relacionamento
 async function enrichItemsWithClients(items) {
     if (!supabaseClient || !items || items.length === 0) return items;
