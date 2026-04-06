@@ -2481,7 +2481,7 @@ function renderVersionForm(id = null) {
 
         // Validação: Data de lançamento não pode ser anterior à data atual
         if (date) {
-            const releaseDate = new Date(date);
+            const releaseDate = new Date(date + 'T00:00:00');
             const today = new Date();
             today.setHours(0, 0, 0, 0); // Zera a hora para comparar apenas a data
             
@@ -2635,87 +2635,103 @@ async function renderItemForm(id = null) {
     document.getElementById('item-form').onsubmit = async (e) => {
         e.preventDefault();
         const form = e.target;
-        
-        // Coleta múltiplos clientes selecionados
-        const selectedClients = Array.from(form.querySelectorAll('input[name="clients"]:checked'))
-            .map(checkbox => parseInt(checkbox.value));
-        
-        // Coleta múltiplos tipos selecionados
-        const selectedTypes = Array.from(form.querySelectorAll('input[name="types"]:checked'))
-            .map(checkbox => checkbox.value);
-        
-        if (selectedClients.length === 0) {
-            showModal('Erro', 'Selecione pelo menos um cliente.');
-            return;
-        }
-        
-        const payload = {
-            Numero: form.itemTicket.value,
-            Descricao: form.itemName.value,
-            Data: form.itemDate.value,
-            Url: form.itemUrl.value,
-            Migration: form.itemMigration.checked,
-            IdCliente: selectedClients.length > 0 ? selectedClients[0] : null // Usa apenas o primeiro por enquanto
-        };
 
-        if (supabaseClient) {
-            let error = null;
+        toggleLoading(true);
+        try {
+            // Coleta múltiplos clientes selecionados
+            const selectedClients = Array.from(form.querySelectorAll('input[name="clients"]:checked'))
+                .map(checkbox => parseInt(checkbox.value));
             
-            if (isEdit) {
-                const res = await supabaseClient.from('Item').update(payload).eq('Id', id);
-                error = res.error;
-                
-                // Atualiza múltiplos clientes na tabela de relacionamento
-                if (!error) {
-                    await TiposAPI.salvarTiposItem(supabaseClient, id, selectedTypes); // Save types
-                    await ClientesAPI.salvarClientesItem(supabaseClient, id, selectedClients);
-                }
-            } else {
-                // Novo item (VersaoId padrão null no banco ou omitido)
-                payload.IdVersao = null;
-                const res = await supabaseClient.from('Item').insert([payload]).select();
-                error = res.error;
-                
-                // Salva múltiplos clientes na tabela de relacionamento
-                if (!error && res.data && res.data.length > 0) {
-                    await TiposAPI.salvarTiposItem(supabaseClient, itemId, selectedTypes); // Save types
-                    const itemId = res.data[0].Id || res.data[0].id;
-                    await ClientesAPI.salvarClientesItem(supabaseClient, itemId, selectedClients);
-                }
-            }
-
-            if (error) {
-                showModal('Erro', 'Erro ao salvar item: ' + error.message);
+            // Coleta múltiplos tipos selecionados
+            const selectedTypes = Array.from(form.querySelectorAll('input[name="types"]:checked'))
+                .map(checkbox => checkbox.value);
+            
+            if (selectedClients.length === 0) {
+                showModal('Erro', 'Selecione pelo menos um cliente.');
+                toggleLoading(false);
                 return;
             }
-        } else {
-            // Fallback Mock
-            if (isEdit) {
-                item.ticket = payload.Numero;
-                item.name = payload.Descricao;
-                item.date = payload.Data;
-                item.url = payload.Url;
-                item.migration = payload.Migration;
-                item.clientId = payload.IdCliente;
-                item.clientIds = selectedClients;
-                item.tipos = selectedTypes; // Mock for types
+            
+            const payload = {
+                Numero: form.itemTicket.value,
+                Descricao: form.itemName.value,
+                Data: form.itemDate.value,
+                Url: form.itemUrl.value,
+                Migration: form.itemMigration.checked,
+                IdCliente: selectedClients.length > 0 ? selectedClients[0] : null // Usa apenas o primeiro por enquanto
+            };
+
+            if (supabaseClient) {
+                let error = null;
+                
+                if (isEdit) {
+                    const res = await supabaseClient.from('Item').update(payload).eq('Id', id);
+                    error = res.error;
+                    
+                    // Atualiza múltiplos clientes na tabela de relacionamento
+                    if (!error) {
+                        await TiposAPI.salvarTiposItem(supabaseClient, id, selectedTypes); // Save types
+                        await ClientesAPI.salvarClientesItem(supabaseClient, id, selectedClients);
+                    }
+                } else {
+                    // Novo item (VersaoId padrão null no banco ou omitido)
+                    payload.IdVersao = null;
+                    const res = await supabaseClient.from('Item').insert([payload]).select();
+                    error = res.error;
+                    
+                    // Salva múltiplos clientes na tabela de relacionamento
+                    if (!error && res.data && res.data.length > 0) {
+                        const itemId = res.data[0].Id || res.data[0].id;
+                        await TiposAPI.salvarTiposItem(supabaseClient, itemId, selectedTypes); // Save types
+                        await ClientesAPI.salvarClientesItem(supabaseClient, itemId, selectedClients);
+                    }
+                }
+
+                if (error) {
+                    showModal('Erro', 'Erro ao salvar item: ' + error.message);
+                    return;
+                }
+
+                showModal('Sucesso', 'Item salvo com sucesso!', () => {
+                    navigateTo('pending');
+                });
             } else {
-                const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
-                state.items.push({
-                    id: newId,
-                    ticket: payload.Numero,
-                    name: payload.Descricao,
-                    date: payload.Data,
-                    url: payload.Url,
-                    migration: payload.Migration,
-                    clientId: payload.IdCliente,
-                    tipos: selectedTypes, // Mock for types
-                    clientIds: selectedClients,
-                    versionId: null
+                // Fallback Mock
+                if (isEdit) {
+                    item.ticket = payload.Numero;
+                    item.name = payload.Descricao;
+                    item.date = payload.Data;
+                    item.url = payload.Url;
+                    item.migration = payload.Migration;
+                    item.clientId = payload.IdCliente;
+                    item.clientIds = selectedClients;
+                    item.tipos = selectedTypes; // Mock for types
+                } else {
+                    const newId = Math.max(...state.items.map(i => i.id), 0) + 1;
+                    state.items.push({
+                        id: newId,
+                        ticket: payload.Numero,
+                        name: payload.Descricao,
+                        date: payload.Data,
+                        url: payload.Url,
+                        migration: payload.Migration,
+                        clientId: payload.IdCliente,
+                        tipos: selectedTypes, // Mock for types
+                        clientIds: selectedClients,
+                        versionId: null
+                    });
+                }
+                
+                showModal('Sucesso', 'Item salvo (modo offline)!', () => {
+                    navigateTo('pending');
                 });
             }
+        } catch (err) {
+            console.error('Erro ao salvar item:', err);
+            showModal('Erro', 'Ocorreu um erro inesperado ao salvar.');
+        } finally {
+            toggleLoading(false);
         }
-        navigateTo('pending');
     };
 }
 
